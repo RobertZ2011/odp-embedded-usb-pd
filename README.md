@@ -1,2 +1,3 @@
-# embedded-rust-template
-Template repository for Embedded Rust development
+# Embedded USB PD
+
+USB PD and UCSI types
