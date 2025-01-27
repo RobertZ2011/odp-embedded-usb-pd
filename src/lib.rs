@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod asynchronous;
+
 /// Port ID new type
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
