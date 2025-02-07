@@ -110,3 +110,35 @@ impl TryFrom<u32> for ApdoKind {
         }
     }
 }
+
+/// Common PDO trait
+pub trait Common {
+    /// Get the PDO kind
+    fn kind(&self) -> PdoKind;
+    /// Get the APDO kind
+    fn apdo_kind(&self) -> Option<ApdoKind>;
+}
+
+/// Top-level PDO type
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Pdo {
+    Source(source::Pdo),
+    Sink(sink::Pdo),
+}
+
+impl Common for Pdo {
+    fn kind(&self) -> PdoKind {
+        match self {
+            Pdo::Source(pdo) => pdo.kind(),
+            Pdo::Sink(pdo) => pdo.kind(),
+        }
+    }
+
+    fn apdo_kind(&self) -> Option<ApdoKind> {
+        match self {
+            Pdo::Source(pdo) => pdo.apdo_kind(),
+            Pdo::Sink(pdo) => pdo.apdo_kind(),
+        }
+    }
+}

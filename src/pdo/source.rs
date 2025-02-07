@@ -18,6 +18,28 @@ pub enum Pdo {
     Augmented(Apdo),
 }
 
+impl Common for Pdo {
+    fn kind(&self) -> PdoKind {
+        match self {
+            Pdo::Fixed(_) => PdoKind::Fixed,
+            Pdo::Battery(_) => PdoKind::Battery,
+            Pdo::Variable(_) => PdoKind::Variable,
+            Pdo::Augmented(_) => PdoKind::Augmented,
+        }
+    }
+
+    fn apdo_kind(&self) -> Option<ApdoKind> {
+        match self {
+            Pdo::Augmented(apdo) => Some(match apdo {
+                Apdo::SprPps(_) => ApdoKind::SprPps,
+                Apdo::EprAvs(_) => ApdoKind::EprAvs,
+                Apdo::SprAvs(_) => ApdoKind::SprAvs,
+            }),
+            _ => None,
+        }
+    }
+}
+
 impl TryFrom<u32> for Pdo {
     type Error = PdError;
 
