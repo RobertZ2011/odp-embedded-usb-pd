@@ -4,8 +4,11 @@
 //! a type-safe version.
 use crate::PdError;
 
+mod rdo;
 pub mod sink;
 pub mod source;
+
+pub use rdo::Rdo;
 
 /// 10 mA unit
 pub const MA10_UNIT: u16 = 10;
