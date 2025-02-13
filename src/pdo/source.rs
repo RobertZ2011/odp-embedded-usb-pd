@@ -186,7 +186,7 @@ bitfield! {
     /// Minimum voltage in 50 mV units
     pub u16, min_voltage, set_min_voltage: 19, 10;
     /// Maximum power in 250 mW units
-    pub u16, max_power, set_max_power: 9, 0;
+    pub u32, max_power, set_max_power: 9, 0;
 }
 
 /// Battery PDO data
@@ -198,7 +198,7 @@ pub struct BatteryData {
     /// Minimum voltage in mV
     pub min_voltage_mv: u16,
     /// Maximum power in mW
-    pub max_power_mw: u16,
+    pub max_power_mw: u32,
 }
 
 impl From<BatteryRaw> for BatteryData {
@@ -372,7 +372,7 @@ bitfield! {
     /// Minimum voltage in 100mV units
     pub u16, min_voltage, set_min_voltage: 15, 8;
     /// PDP in 1W units
-    pub u16, pdp, set_pdp: 7, 0;
+    pub u32, pdp, set_pdp: 7, 0;
 }
 
 /// EPR Adjustable voltage supply data
@@ -386,7 +386,7 @@ pub struct EprAvsData {
     /// Minimum voltage in mV
     pub min_voltage_mv: u16,
     /// PDP in mW
-    pub pdp_mw: u16,
+    pub pdp_mw: u32,
 }
 
 impl From<EprAvsRaw> for EprAvsData {

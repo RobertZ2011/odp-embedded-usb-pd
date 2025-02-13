@@ -21,9 +21,9 @@ pub const MV50_UNIT: u16 = 50;
 /// 100 mV unit
 pub const MV100_UNIT: u16 = 100;
 /// 250 mV unit
-pub const MW250_UNIT: u16 = 250;
+pub const MW250_UNIT: u32 = 250;
 /// 1000 mW unit
-pub const MW1000_UNIT: u16 = 1000;
+pub const MW1000_UNIT: u32 = 1000;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

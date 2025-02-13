@@ -118,9 +118,9 @@ bitfield! {
     /// EPR capable
     pub u8, epr_capable, set_epr_capable: 22, 22;
     /// Operating power in 250mW units
-    pub u16, operating_power, set_operating_power: 19, 10;
+    pub u32, operating_power, set_operating_power: 19, 10;
     /// Max operating power in 250mW units
-    pub u16, max_operating_power, set_max_operating_power: 9, 0;
+    pub u32, max_operating_power, set_max_operating_power: 9, 0;
 }
 
 /// Battery RDO data
@@ -140,9 +140,9 @@ pub struct BatteryData {
     /// EPR capable
     pub epr_capable: bool,
     /// Operating power in mW
-    pub operating_power_mw: u16,
+    pub operating_power_mw: u32,
     /// Max operating power in mW
-    pub max_operating_power_mw: u16,
+    pub max_operating_power_mw: u32,
 }
 
 impl From<BatteryRaw> for BatteryData {
