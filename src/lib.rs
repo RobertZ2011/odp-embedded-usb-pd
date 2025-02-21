@@ -2,6 +2,7 @@
 
 pub mod asynchronous;
 pub mod pdo;
+pub mod type_c;
 
 /// Port ID new type
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
