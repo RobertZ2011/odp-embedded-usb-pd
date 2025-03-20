@@ -77,16 +77,14 @@ pub enum PowerRole {
     Source,
 }
 
-#[allow(clippy::from_over_into)]
-impl<T, BE> Into<Result<T, Error<BE>>> for PdError {
-    fn into(self) -> Result<T, Error<BE>> {
-        Err(Error::Pd(self))
+impl<T, BE> From<PdError> for Result<T, Error<BE>> {
+    fn from(err: PdError) -> Self {
+        Err(err.into())
     }
 }
 
-#[allow(clippy::from_over_into)]
-impl<BE> Into<Error<BE>> for PdError {
-    fn into(self) -> Error<BE> {
-        Error::Pd(self)
+impl<BE> From<PdError> for Error<BE> {
+    fn from(err: PdError) -> Self {
+        Error::Pd(err)
     }
 }
