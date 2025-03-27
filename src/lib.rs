@@ -2,11 +2,23 @@
 
 pub mod pdo;
 pub mod type_c;
+pub mod ucsi;
 
-/// Port ID new type
+/// Port ID new type.
+///
+/// This differs from [`GlobalPortId`] in that it refers to a port on a specific controller. If
+/// there are multiple controllers, the same port ID may be used on different controllers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PortId(pub u8);
+
+/// Global port ID, used to unique identify a port
+///
+/// This differs from [`PortId`] in that it is not limited to the number of ports on a single
+/// controller. If there are multiple controllers, each port should have a unique global port ID.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GlobalPortId(pub u8);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
