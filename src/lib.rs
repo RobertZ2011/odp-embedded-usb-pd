@@ -1,6 +1,5 @@
 #![no_std]
 
-pub mod asynchronous;
 pub mod pdo;
 pub mod type_c;
 
