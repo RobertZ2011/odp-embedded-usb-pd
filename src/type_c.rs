@@ -44,10 +44,14 @@ pub enum ConnectionState {
     /// section B "Debug Accessory Mode".
     DebugAccessory,
 
-    /// USB Power Delivery ports that have exchanged a Message and a GoodCRC Message response using
+    /// A port that is attached to another device, either PD-capable or not.
+    ///
+    /// An *attached* port is one that is mechanically joined with USB cable to another port.
+    ///
+    /// A *connected* port is one that has exchanged a Message and a GoodCRC Message response using
     /// the USB Power Delivery protocol so that both Port Partners know that each is PD Capable.
     ///
     /// See [USB PD specification, revision 3.2, version 1.1](https://www.usb.org/document-library/usb-power-delivery),
     /// section 1.6 "Terms and Abbreviations".
-    Connected,
+    Attached,
 }
