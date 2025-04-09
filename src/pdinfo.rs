@@ -49,9 +49,9 @@ impl defmt::Format for PowerPathStatus {
 
 /// The Alternate Mode the controller is in.
 ///
-/// Alternate Modes are vendor-defined therefore the meaning of the bits is not defined in the
-/// USB-C spec. Each driver should define the meaning of the bits in the context of the driver, or
-/// provide a way to convert this type to a more specific type.
+/// Alternate Modes are vendor-defined therefore the meaning of the `userX` getters, such as
+/// [`AltMode::user0()`], are defined by the particular driver. Additionally, common alternate
+/// modes are defined and should be used by drivers that support them.
 #[derive(Clone, Copy)]
 pub struct AltMode(inner::AltMode);
 
@@ -59,10 +59,13 @@ impl core::fmt::Debug for AltMode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Implementing Debug manually to avoid the `.0: 123` field in the bitfield debug impl.
         f.debug_struct("AltMode")
-            .field("status1", &self.status1())
-            .field("status2", &self.status2())
-            .field("status3", &self.status3())
-            .field("status4", &self.status4())
+            .field("user0", &self.user0())
+            .field("user1", &self.user1())
+            .field("user2", &self.user2())
+            .field("user3", &self.user3())
+            .field("display_port", &self.display_port())
+            .field("thunderbolt", &self.thunderbolt())
+            .field("usb4", &self.usb4())
             .finish()
     }
 }
@@ -73,44 +76,73 @@ impl defmt::Format for AltMode {
         // Implementing Format manually to avoid the `.0: 123` field in the bitfield debug impl.
         defmt::write!(
             fmt,
-            "AltMode {{ status1: {}, status2: {}, status3: {}, status4: {} }}",
-            self.status1(),
-            self.status2(),
-            self.status3(),
-            self.status4()
+            "AltMode {{ user0: {}, user1: {}, user2: {}, user3: {}, display_port: {}, thunderbolt: {}, usb4: {} }}",
+            self.user0(),
+            self.user1(),
+            self.user2(),
+            self.user3(),
+            self.display_port(),
+            self.thunderbolt(),
+            self.usb4(),
         )
     }
 }
 
 impl AltMode {
     /// Creates a new [`AltMode`] instance with the given status bits.
-    pub fn new(status1: bool, status2: bool, status3: bool, status4: bool) -> Self {
+    pub fn new(
+        user0: bool,
+        user1: bool,
+        user2: bool,
+        user3: bool,
+        display_port: bool,
+        thunderbolt: bool,
+        usb4: bool,
+    ) -> Self {
         Self(inner::AltMode::new(
-            status1.into(),
-            status2.into(),
-            status3.into(),
-            status4.into(),
+            user0.into(),
+            user1.into(),
+            user2.into(),
+            user3.into(),
+            display_port.into(),
+            thunderbolt.into(),
+            usb4.into(),
         ))
     }
 
-    /// Returns true if the first status bit is set.
-    pub fn status1(&self) -> bool {
-        self.0.status1() == 1
+    /// User-defined alternate mode 0 is active.
+    pub fn user0(&self) -> bool {
+        self.0.user0() == 1
     }
 
-    /// Returns true if the second status bit is set.
-    pub fn status2(&self) -> bool {
-        self.0.status2() == 1
+    /// User-defined alternate mode 1 is active.
+    pub fn user1(&self) -> bool {
+        self.0.user1() == 1
     }
 
-    /// Returns true if the third status bit is set.
-    pub fn status3(&self) -> bool {
-        self.0.status3() == 1
+    /// User-defined alternate mode 2 is active.
+    pub fn user2(&self) -> bool {
+        self.0.user2() == 1
     }
 
-    /// Returns true if the fourth status bit is set.
-    pub fn status4(&self) -> bool {
-        self.0.status4() == 1
+    /// User-defined alternate mode 3 is active.
+    pub fn user3(&self) -> bool {
+        self.0.user3() == 1
+    }
+
+    /// DisplayPort alternate mode is active.
+    pub fn display_port(&self) -> bool {
+        self.0.display_port() == 1
+    }
+
+    /// Thunderbolt alternate mode is active.
+    pub fn thunderbolt(&self) -> bool {
+        self.0.thunderbolt() == 1
+    }
+
+    /// USB4 alternate mode is active.
+    pub fn usb4(&self) -> bool {
+        self.0.usb4() == 1
     }
 }
 
@@ -131,10 +163,13 @@ mod inner {
         pub struct AltMode(u8);
         impl new;
         u8;
-        pub status1, set_status1: 0, 0;
-        pub status2, set_status2: 1, 1;
-        pub status3, set_status3: 2, 2;
-        pub status4, set_status4: 3, 3;
+        pub user0, set_user0: 0, 0;
+        pub user1, set_user1: 1, 1;
+        pub user2, set_user2: 2, 2;
+        pub user3, set_user3: 3, 3;
+        pub display_port, set_display_port: 4, 4;
+        pub thunderbolt, set_thunderbolt: 5, 5;
+        pub usb4, set_usb4: 6, 6;
     }
 }
 
@@ -158,9 +193,12 @@ mod tests {
         let status = AltMode(inner::AltMode(0b0000_0001));
         let debug = std::format!("{:?}", status);
         assert!(debug.contains("AltMode"));
-        assert!(debug.contains("status1:"));
-        assert!(debug.contains("status2:"));
-        assert!(debug.contains("status3:"));
-        assert!(debug.contains("status4:"));
+        assert!(debug.contains("user0:"));
+        assert!(debug.contains("user1:"));
+        assert!(debug.contains("user2:"));
+        assert!(debug.contains("user3:"));
+        assert!(debug.contains("display_port:"));
+        assert!(debug.contains("thunderbolt:"));
+        assert!(debug.contains("usb4:"));
     }
 }
