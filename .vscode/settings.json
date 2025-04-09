@@ -14,5 +14,6 @@
         "${workspaceFolder}/Cargo.toml"
     ],
     "rust-analyzer.cargo.features": [
+        "defmt",
     ]
 }

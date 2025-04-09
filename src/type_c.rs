@@ -27,3 +27,31 @@ impl Current {
         }
     }
 }
+
+/// The current state of a Type-C port.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ConnectionState {
+    /// The port is connected to an USB Type-C Digital Audio (TCDA) accessory.
+    ///
+    /// See [USB Type-C specification, release 2.4](https://www.usb.org/document-library/usb-type-cr-cable-and-connector-specification-release-24),
+    /// section C "USB Type-C Digital Audio".
+    AudioAccessory,
+
+    /// The port is in Debug Accessory Mode (DAM).
+    ///
+    /// See [USB Type-C specification, release 2.4](https://www.usb.org/document-library/usb-type-cr-cable-and-connector-specification-release-24),
+    /// section B "Debug Accessory Mode".
+    DebugAccessory,
+
+    /// A port that is attached to another device, either PD-capable or not.
+    ///
+    /// An *attached* port is one that is mechanically joined with USB cable to another port.
+    ///
+    /// A *connected* port is one that has exchanged a Message and a GoodCRC Message response using
+    /// the USB Power Delivery protocol so that both Port Partners know that each is PD Capable.
+    ///
+    /// See [USB PD specification, revision 3.2, version 1.1](https://www.usb.org/document-library/usb-power-delivery),
+    /// section 1.6 "Terms and Abbreviations".
+    Attached,
+}
