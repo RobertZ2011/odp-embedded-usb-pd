@@ -110,6 +110,11 @@ impl AltMode {
         ))
     }
 
+    /// Creates a new [`AltMode`] instance with no alternate mode active.
+    pub const fn none() -> Self {
+        Self(inner::AltMode(0))
+    }
+
     /// User-defined alternate mode 0 is active.
     pub fn user0(&self) -> bool {
         self.0.user0() == 1
