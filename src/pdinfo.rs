@@ -13,6 +13,11 @@ impl PowerPathStatus {
         ))
     }
 
+    /// Creates a new [`PowerPathStatus`] instance with no switches enabled
+    pub const fn none() -> Self {
+        Self(inner::PowerPathStatus(0))
+    }
+
     /// Returns true if the external VBUS switch is enabled.
     pub fn ext_vbus_sw_en(&self) -> bool {
         self.0.ext_vbus_sw_en() == 1
