@@ -69,6 +69,8 @@ pub enum PdError {
     Serialize,
     /// Command not yet completed
     InProgress,
+    /// Command was valid, but could not be executed at this time
+    Rejected,
 }
 
 /// Top-level error type
