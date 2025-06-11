@@ -122,6 +122,8 @@ pub trait Common {
     fn apdo_kind(&self) -> Option<ApdoKind>;
     /// Return true if the PDO is a dual-rule PDO
     fn is_dual_role(&self) -> bool;
+    /// Return true if the PDO has unconstrained power
+    fn is_unconstrained_power(&self) -> bool;
 }
 
 /// Top-level PDO type
@@ -151,6 +153,13 @@ impl Common for Pdo {
         match self {
             Pdo::Source(pdo) => pdo.is_dual_role(),
             Pdo::Sink(pdo) => pdo.is_dual_role(),
+        }
+    }
+
+    fn is_unconstrained_power(&self) -> bool {
+        match self {
+            Pdo::Source(pdo) => pdo.is_unconstrained_power(),
+            Pdo::Sink(pdo) => pdo.is_unconstrained_power(),
         }
     }
 }

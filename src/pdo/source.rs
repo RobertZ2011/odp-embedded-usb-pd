@@ -45,6 +45,13 @@ impl Common for Pdo {
             _ => false,
         }
     }
+
+    fn is_unconstrained_power(&self) -> bool {
+        match self {
+            Pdo::Fixed(data) => data.unconstrained_power,
+            _ => false,
+        }
+    }
 }
 
 impl TryFrom<u32> for Pdo {
