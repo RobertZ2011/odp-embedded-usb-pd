@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod ado;
 pub mod pdinfo;
 pub mod pdo;
 pub mod type_c;
