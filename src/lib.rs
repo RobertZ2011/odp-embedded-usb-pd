@@ -91,6 +91,26 @@ pub enum PowerRole {
     Source,
 }
 
+/// Data role
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum DataRole {
+    /// Upward-facing port
+    Ufp,
+    /// Downward-facing port
+    Dfp,
+}
+
+/// Plug orientation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PlugOrientation {
+    /// Upside-up orientation
+    CC1,
+    /// Upside-down orientation
+    CC2,
+}
+
 impl<T, BE> From<PdError> for Result<T, Error<BE>> {
     fn from(err: PdError) -> Self {
         Err(err.into())
