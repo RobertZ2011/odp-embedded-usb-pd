@@ -12,7 +12,14 @@ pub mod ucsi;
 /// there are multiple controllers, the same port ID may be used on different controllers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(transparent)]
 pub struct PortId(pub u8);
+
+impl From<u8> for PortId {
+    fn from(port: u8) -> Self {
+        PortId(port)
+    }
+}
 
 /// Global port ID, used to unique identify a port
 ///
@@ -20,7 +27,14 @@ pub struct PortId(pub u8);
 /// controller. If there are multiple controllers, each port should have a unique global port ID.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(transparent)]
 pub struct GlobalPortId(pub u8);
+
+impl From<u8> for GlobalPortId {
+    fn from(port: u8) -> Self {
+        GlobalPortId(port)
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
