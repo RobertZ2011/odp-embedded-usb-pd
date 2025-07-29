@@ -46,8 +46,8 @@ impl From<u8> for PdoKind {
         const PDO_KIND_MASK: u8 = 0x3;
         match value & PDO_KIND_MASK {
             0x0 => PdoKind::Fixed,
-            0x1 => PdoKind::Battery,
-            0x2 => PdoKind::Variable,
+            0x1 => PdoKind::Variable,
+            0x2 => PdoKind::Battery,
             0x3 => PdoKind::Augmented,
             _ => unreachable!(),
         }
@@ -58,8 +58,8 @@ impl From<PdoKind> for u8 {
     fn from(value: PdoKind) -> Self {
         match value {
             PdoKind::Fixed => 0x0,
-            PdoKind::Battery => 0x1,
-            PdoKind::Variable => 0x2,
+            PdoKind::Variable => 0x1,
+            PdoKind::Battery => 0x2,
             PdoKind::Augmented => 0x3,
         }
     }
