@@ -6,6 +6,7 @@ pub mod cancel;
 pub mod get_capability;
 pub mod ppm_reset;
 pub mod set_notification_enable;
+pub mod state_machine;
 
 use bincode::de::{Decode, Decoder};
 use bincode::enc::{Encode, Encoder};
