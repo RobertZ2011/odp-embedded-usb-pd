@@ -8,7 +8,7 @@ use crate::ucsi::{CommandHeaderRaw, COMMAND_LEN};
 
 bitfield! {
     /// Raw ack flags, see UCSI spec 6.5.4 for details
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct AckRaw(u8);
     impl Debug;
@@ -20,7 +20,7 @@ bitfield! {
 }
 
 /// Higher-level wrapper around [`AckRaw`]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Ack(AckRaw);
 
@@ -74,7 +74,7 @@ impl<Context> Decode<Context> for Ack {
 }
 
 /// ACK_CC_CI command structure
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Args {
     /// Ack flags

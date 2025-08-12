@@ -6,14 +6,17 @@ use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bitfield::bitfield;
 
 use crate::pdo::{MA5_UNIT, MV5_UNIT};
+use crate::ucsi::{CommandHeaderRaw, COMMAND_LEN};
 use crate::{PlugOrientation, PowerRole};
 
 /// Data length for the GET_CONNECTOR_STATUS command response
 pub const RESPONSE_DATA_LEN: usize = 19;
+/// Command padding, -1 for the connector number byte
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - 1;
 
 bitfield! {
     /// Connector Status Change bitmap
-    #[derive(Copy, Default, Clone)]
+    #[derive(Copy, Default, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ConnectorStatusChangeRaw(u16);
     impl Debug;
@@ -46,7 +49,7 @@ bitfield! {
 }
 
 /// Higher-level wrapper around [`ConnectorStatusChangeRaw`]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectorStatusChange(ConnectorStatusChangeRaw);
 
@@ -246,52 +249,79 @@ impl TryFrom<u8> for PowerOperationMode {
     }
 }
 
-/// Connector Partner Flags
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ConnectorPartnerFlags {
+bitfield! {
+    /// Raw connector partner flags
+    #[derive(Copy, Default, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    pub struct ConnectorPartnerFlagsRaw(u8);
+    impl Debug;
+
     /// USB2.x or USB3.x
-    #[default]
-    Usb = 0x0,
+    pub bool, usb, set_usb: 0;
     /// Alternate mode
-    AltMode = 0x1,
+    pub bool, alt_mode, set_alt_mode: 1;
     /// USB4 Gen3
-    Usb4Gen3 = 0x2,
+    pub bool, usb4_gen3, set_usb4_gen3: 2;
     /// USB4 Gen4
-    Usb4Gen4 = 0x3,
+    pub bool, usb4_gen4, set_usb4_gen4: 3;
 }
 
-/// Invalid Connector Partner Flags error, contains the raw value that failed to decode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Connector partner flags
+#[derive(Copy, Debug, Default, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct InvalidConnectorPartnerFlags(pub u8);
+pub struct ConnectorPartnerFlags(ConnectorPartnerFlagsRaw);
 
-impl From<InvalidConnectorPartnerFlags> for DecodeError {
-    fn from(val: InvalidConnectorPartnerFlags) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "ConnectorPartnerFlags",
-            found: val.0 as u32,
-            allowed: &AllowedEnumVariants::Allowed(&[
-                ConnectorPartnerFlags::Usb as u32,
-                ConnectorPartnerFlags::AltMode as u32,
-                ConnectorPartnerFlags::Usb4Gen3 as u32,
-                ConnectorPartnerFlags::Usb4Gen4 as u32,
-            ]),
-        }
+impl ConnectorPartnerFlags {
+    /// Get usb flag
+    pub fn usb(&self) -> bool {
+        self.0.usb()
+    }
+
+    /// Set usb flag
+    pub fn set_usb(&mut self, value: bool) {
+        self.0.set_usb(value);
+    }
+
+    /// Get alternate mode flag
+    pub fn alt_mode(&self) -> bool {
+        self.0.alt_mode()
+    }
+
+    /// Set alternate mode flag
+    pub fn set_alt_mode(&mut self, value: bool) {
+        self.0.set_alt_mode(value);
+    }
+
+    /// Get USB4 Gen3 flag
+    pub fn usb4_gen3(&self) -> bool {
+        self.0.usb4_gen3()
+    }
+
+    /// Set USB4 Gen3 flag
+    pub fn set_usb4_gen3(&mut self, value: bool) {
+        self.0.set_usb4_gen3(value);
+    }
+
+    /// Get USB4 Gen4 flag
+    pub fn usb4_gen4(&self) -> bool {
+        self.0.usb4_gen4()
+    }
+
+    /// Set USB4 Gen4 flag
+    pub fn set_usb4_gen4(&mut self, value: bool) {
+        self.0.set_usb4_gen4(value);
     }
 }
 
-impl TryFrom<u8> for ConnectorPartnerFlags {
-    type Error = InvalidConnectorPartnerFlags;
+impl From<u8> for ConnectorPartnerFlags {
+    fn from(value: u8) -> Self {
+        ConnectorPartnerFlags(ConnectorPartnerFlagsRaw(value))
+    }
+}
 
-    fn try_from(raw: u8) -> Result<Self, Self::Error> {
-        match raw {
-            0x0 => Ok(ConnectorPartnerFlags::Usb),
-            0x1 => Ok(ConnectorPartnerFlags::AltMode),
-            0x2 => Ok(ConnectorPartnerFlags::Usb4Gen3),
-            0x3 => Ok(ConnectorPartnerFlags::Usb4Gen4),
-            _ => Err(InvalidConnectorPartnerFlags(raw)),
-        }
+impl From<ConnectorPartnerFlags> for u8 {
+    fn from(flags: ConnectorPartnerFlags) -> Self {
+        flags.0 .0
     }
 }
 
@@ -405,7 +435,8 @@ impl TryFrom<u8> for BatteryChargingCapabilityStatus {
 
 bitfield! {
     /// Provider Capabilities Limited Reason
-    #[derive(Copy, Clone, Default)]
+    #[derive(Copy, Clone, Default, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ProviderCapsLimitedReasonRaw(u8);
     impl Debug;
     /// Power budget lowered
@@ -414,7 +445,8 @@ bitfield! {
     pub bool, reaching_power_budget_limit, set_reaching_power_budget_limit: 1;
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProviderCapsLimitedReason(ProviderCapsLimitedReasonRaw);
 
 impl ProviderCapsLimitedReason {
@@ -469,8 +501,8 @@ bitfield! {
     pub u32, rdo, set_rdo: 63, 32;
     // Battery Charging Capability Status
     pub u8, battery_charging_status, set_battery_charging_status: 65, 64;
-    // Provider Capabilities Limited Reason
-    pub u8, provider_caps_limited_reason, set_provider_caps_limited_reason: 69, 66;
+    // Reason for limited provider capabilities
+    pub u8, provider_caps_limited, set_provider_caps_limited: 69, 66;
     // bcdPDVersion Operation Mode
     pub u16, bcd_pd_version, set_bcd_pd_version: 85, 70;
     // Orientation
@@ -494,7 +526,7 @@ bitfield! {
 }
 
 /// All fields that are only valid when connect_status is true
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ConnectedStatus {
     /// Power operation mode
@@ -511,6 +543,8 @@ pub struct ConnectedStatus {
     pub rdo: Option<u32>,
     /// Battery charging capability status, only valid when operating as a sink
     pub battery_charging_status: Option<BatteryChargingCapabilityStatus>,
+    /// Reason for limited provider capability
+    pub provider_caps_limited: Option<ProviderCapsLimitedReason>,
     /// BCD PD version, only valid when operating in PD mode
     pub bcd_pd_version: Option<u16>,
     /// Orientation
@@ -520,7 +554,7 @@ pub struct ConnectedStatus {
 }
 
 /// Power reading result
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PowerReading {
     /// Current scale
@@ -536,7 +570,7 @@ pub struct PowerReading {
 }
 
 /// Main GET_CONNECTOR_STATUS response data structure
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResponseData {
     /// Connector status change bitmap
@@ -554,8 +588,6 @@ pub struct ResponseData {
 pub enum InvalidResponseData {
     /// Invalid power operation mode
     InvalidPowerOperationMode(InvalidPowerOperationMode),
-    /// Invalid connector partner flags
-    InvalidConnectorPartnerFlags(InvalidConnectorPartnerFlags),
     /// Invalid connector partner type
     InvalidConnectorPartnerType(InvalidConnectorPartnerType),
     /// Invalid battery charging capability status
@@ -566,7 +598,6 @@ impl From<InvalidResponseData> for DecodeError {
     fn from(err: InvalidResponseData) -> Self {
         match err {
             InvalidResponseData::InvalidPowerOperationMode(e) => e.into(),
-            InvalidResponseData::InvalidConnectorPartnerFlags(e) => e.into(),
             InvalidResponseData::InvalidConnectorPartnerType(e) => e.into(),
             InvalidResponseData::InvalidBatteryChargingCapabilityStatus(e) => e.into(),
         }
@@ -591,11 +622,10 @@ impl TryFrom<[u8; RESPONSE_DATA_LEN]> for ResponseData {
             } else {
                 PowerRole::Sink
             };
-            let partner_flags = ConnectorPartnerFlags::try_from(raw.partner_flags())
-                .map_err(InvalidResponseData::InvalidConnectorPartnerFlags)?;
+            let partner_flags = ConnectorPartnerFlags::from(raw.partner_flags());
             let partner_type = ConnectorPartnerType::try_from(raw.partner_type())
                 .map_err(InvalidResponseData::InvalidConnectorPartnerType)?;
-            let rdo = if connect_status && power_op_mode == PowerOperationMode::Pd {
+            let rdo = if connect_status && power_op_mode == PowerOperationMode::Pd && raw.rdo() != 0 {
                 Some(raw.rdo())
             } else {
                 None
@@ -607,6 +637,12 @@ impl TryFrom<[u8; RESPONSE_DATA_LEN]> for ResponseData {
                     BatteryChargingCapabilityStatus::try_from(raw.battery_charging_status())
                         .map_err(InvalidResponseData::InvalidBatteryChargingCapabilityStatus)?,
                 )
+            } else {
+                None
+            };
+
+            let provider_caps_limited = if raw.provider_caps_limited() != 0 {
+                Some(ProviderCapsLimitedReason::from(raw.provider_caps_limited()))
             } else {
                 None
             };
@@ -632,6 +668,7 @@ impl TryFrom<[u8; RESPONSE_DATA_LEN]> for ResponseData {
                 partner_type,
                 rdo,
                 battery_charging_status,
+                provider_caps_limited,
                 bcd_pd_version,
                 orientation,
                 sink_path_status,
@@ -678,17 +715,25 @@ impl From<ResponseData> for [u8; RESPONSE_DATA_LEN] {
         if let Some(status) = data.status {
             raw.set_power_op_mode(status.power_op_mode as u8);
             raw.set_power_direction(status.power_direction == PowerRole::Source);
-            raw.set_partner_flags(status.partner_flags as u8);
+            raw.set_partner_flags(status.partner_flags.into());
             raw.set_partner_type(status.partner_type as u8);
-            if let Some(rdo) = status.rdo {
-                raw.set_rdo(rdo);
+
+            if status.rdo.is_some_and(|rdo| rdo != 0) {
+                raw.set_rdo(status.rdo.unwrap());
             }
+
             if let Some(battery_charging_status) = status.battery_charging_status {
                 raw.set_battery_charging_status(battery_charging_status as u8);
             }
+
+            if let Some(provider_caps_limited) = status.provider_caps_limited {
+                raw.set_provider_caps_limited(provider_caps_limited.0 .0);
+            }
+
             if let Some(bcd_pd_version) = status.bcd_pd_version {
                 raw.set_bcd_pd_version(bcd_pd_version);
             }
+
             raw.set_orientation(status.orientation == PlugOrientation::CC2);
             raw.set_sink_path_status(status.sink_path_status);
         }
@@ -721,5 +766,136 @@ impl<Context> Decode<Context> for ResponseData {
         let raw = <[u8; RESPONSE_DATA_LEN]>::decode(decoder)?;
         let data = ResponseData::try_from(raw)?;
         Ok(data)
+    }
+}
+/// GET_CONNECTOR_STATUS command arguments
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Args;
+
+impl Encode for Args {
+    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+        // Padding to fill the command length
+        [0u8; COMMAND_PADDING].encode(encoder)
+    }
+}
+
+impl<Context> Decode<Context> for Args {
+    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
+        // Read padding
+        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
+        Ok(Self)
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use bincode::config::standard;
+    use bincode::{decode_from_slice, encode_into_slice};
+
+    use super::*;
+
+    /// Create standard response data for testing
+    pub fn create_response_data() -> (ResponseData, [u8; RESPONSE_DATA_LEN]) {
+        let response_data = ResponseData {
+            status_change: ConnectorStatusChange::from(0x8001),
+            connect_status: true,
+            status: Some(ConnectedStatus {
+                power_op_mode: PowerOperationMode::Pd,
+                power_direction: PowerRole::Sink,
+                partner_flags: ConnectorPartnerFlags::from(0x8),
+                partner_type: ConnectorPartnerType::DfpAttached,
+                rdo: Some(0x78563412),
+                battery_charging_status: Some(BatteryChargingCapabilityStatus::Nominal),
+                provider_caps_limited: Some(ProviderCapsLimitedReason::from(0x01)),
+                bcd_pd_version: Some(0x300),
+                orientation: PlugOrientation::CC2,
+                sink_path_status: true,
+            }),
+            reverse_current_protection_status: true,
+            power_reading: Some(PowerReading {
+                scale_ma: 5,
+                peak_current_ma: 40,
+                avg_current_ma: 5,
+                scale_mv: 5,
+                voltage_reading_mv: 10,
+            }),
+        };
+
+        let mut bytes = [0u8; RESPONSE_DATA_LEN];
+        // Status changed flags - 2 bytes
+        // Set lowest and highest non-reserved bits
+        // Corresponds to external supply change + error
+        bytes[0] = 0x1;
+        bytes[1] = 0x80;
+
+        // Various status flags - 1 byte
+        // power operation mode = PD
+        // Connect status = 1
+        // Power direction = 0 (consumer)
+        bytes[2] = 0x0b;
+
+        // Connector partner flags - 1 byte
+        // USB gen 4 + DFP``
+        bytes[3] = 0x21;
+
+        // RDO - 4 bytes
+        // Probably not a valid RDO, but we only have the raw value because an RDO needs
+        // the corresponding PDO to be decoded
+        bytes[4] = 0x12;
+        bytes[5] = 0x34;
+        bytes[6] = 0x56;
+        bytes[7] = 0x78;
+
+        // More status flags + lower 2 bits of bcdPDVersion - 1 byte
+        // Battery charging status - nominal, provider power level lowered, version 3.0
+        bytes[8] = 0x05;
+
+        // Bits 2 through 10 of bcdPDVersion - 1 byte
+        // PD version 3.00
+        bytes[9] = 0xC0;
+
+        // More status flags - 1 byte
+        // Orientation - flipped + sink path status
+        bytes[10] = 0xC0;
+
+        // Power reading flags - 1 byte
+        // Reverse current protection status + power reading ready + current scale = 5 mA + lower 3 bits of peak current
+        bytes[11] = 0x07;
+
+        // Bits 3 through 11 of peak current - 1 byte
+        // Peak current = 8 * 5 mA
+        bytes[12] = 0x01;
+
+        // Upper 5 bits of peak current, lower 3 bits of average current - 1 byte
+        // Average current = 1 * 5 mA
+        bytes[13] = 0x20;
+
+        // Upper 5 bits of average current, lower 3 bits of voltage scale
+        // Voltage scale = 5 mV
+        bytes[15] = 0x20;
+
+        // Upper bit of voltage scale, lower seven bits of voltage reading
+        // 2 * 5 mV
+        bytes[16] = 0x04;
+
+        (response_data, bytes)
+    }
+
+    #[test]
+    fn test_decode_response_data() {
+        let (expected, bytes) = create_response_data();
+
+        let (response_data, consumed): (ResponseData, usize) =
+            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
+
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(response_data, expected);
+
+        let mut encoded_bytes = [0u8; RESPONSE_DATA_LEN];
+        let len = encode_into_slice(expected, &mut encoded_bytes, standard().with_fixed_int_encoding()).unwrap();
+
+        assert_eq!(len, RESPONSE_DATA_LEN);
+        assert_eq!(encoded_bytes, bytes);
     }
 }
