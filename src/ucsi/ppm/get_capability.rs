@@ -8,7 +8,7 @@ use bitfield::bitfield;
 use crate::ucsi::{CommandHeaderRaw, COMMAND_LEN};
 
 /// Data length for the GET_CAPABILITY command response
-pub const RESPONSE_DATA_LEN: u8 = 0;
+pub const RESPONSE_DATA_LEN: usize = 16;
 /// Command padding
 pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>();
 
@@ -34,7 +34,7 @@ impl<Context> Decode<Context> for Args {
 
 bitfield! {
     /// Optional features bitmap for GetCapability command
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct OptionalFeaturesRaw(u32);
     impl Debug;
@@ -60,7 +60,7 @@ bitfield! {
 }
 
 /// Higher-level wrapper around [`OptionalFeaturesRaw`]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OptionalFeatures(OptionalFeaturesRaw);
 
@@ -181,7 +181,7 @@ impl Encode for OptionalFeatures {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         let raw = self.0 .0;
         let lower = (raw & 0xFFFF) as u16;
-        let upper = (raw >> 16) as u16;
+        let upper = (raw >> 16) as u8;
         lower.encode(encoder)?;
         upper.encode(encoder)?;
         Ok(())
@@ -191,7 +191,7 @@ impl Encode for OptionalFeatures {
 impl<Context> Decode<Context> for OptionalFeatures {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let lower = u16::decode(decoder)?;
-        let upper = u16::decode(decoder)?;
+        let upper = u8::decode(decoder)?;
         let raw = ((upper as u32) << 16) | (lower as u32);
         Ok(OptionalFeatures::from(raw))
     }
@@ -279,7 +279,7 @@ impl<Context> Decode<Context> for PowerSource {
 
 bitfield! {
     /// Raw attribute data for GetCapability command
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct AttributesRaw(u32);
     impl Debug;
@@ -297,7 +297,7 @@ bitfield! {
 }
 
 /// Higher-level wrapper around [`AttributesRaw`]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Attributes(AttributesRaw);
 
@@ -384,7 +384,7 @@ impl<Context> Decode<Context> for Attributes {
 }
 
 /// Get capability response data
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResponseData {
     /// Attributes
@@ -437,5 +437,74 @@ impl<Context> Decode<Context> for ResponseData {
             bcd_usb_pd_spec,
             bcd_type_c_spec,
         })
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use bincode::config::standard;
+    use bincode::{decode_from_slice, encode_into_slice};
+
+    use super::*;
+
+    /// Create a standard response data value for testing
+    pub fn create_response_data() -> (ResponseData, [u8; RESPONSE_DATA_LEN]) {
+        let response_data = ResponseData {
+            attributes: Attributes::from(0x43),
+            num_connectors: 2,
+            optional_features: OptionalFeatures::from(0xFF),
+            num_alt_modes: 3,
+            bcd_battery_charging_spec: 0x0120,
+            bcd_usb_pd_spec: 0x0300,
+            bcd_type_c_spec: 0x0200,
+        };
+
+        let mut bytes = [0u8; RESPONSE_DATA_LEN];
+
+        // Attributes - 4 bytes
+        // Disable state support + Battery charging + USB PD + USB Type-C
+        bytes[0] = 0x43;
+
+        // Num connectors - 1 byte
+        bytes[4] = 2;
+
+        // Optional features - 3 bytes
+        bytes[5] = 0xFF; // Support everything
+
+        // Number of support alt modes
+        bytes[8] = 3; // Let's just say 3
+
+        // bcdBCVersion - 2 bytes
+        // 1.20
+        bytes[10] = 0x20;
+        bytes[11] = 0x01;
+
+        // bcdPDVersion - 2 bytes
+        // 3.00
+        bytes[12] = 0x00;
+        bytes[13] = 0x03;
+
+        // bcdUSBTypeCVersion - 2 bytes
+        // 2.00
+        bytes[14] = 0x00;
+        bytes[15] = 0x02;
+
+        (response_data, bytes)
+    }
+
+    #[test]
+    fn test_encode_response_data() {
+        let (expected, bytes) = create_response_data();
+
+        let (response_data, consumed): (ResponseData, usize) =
+            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(response_data, expected);
+
+        let mut encoded_bytes = [0u8; RESPONSE_DATA_LEN];
+        let len = encode_into_slice(expected, &mut encoded_bytes, standard().with_fixed_int_encoding()).unwrap();
+
+        assert_eq!(len, RESPONSE_DATA_LEN);
+        assert_eq!(encoded_bytes, bytes);
     }
 }

@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(Ado::try_from(raw).unwrap(), Ado::ControllerInitiatedWake);
 
         raw.set_extended_alert_type(0x05);
-        assert_eq!(Ado::try_from(raw), Err(PdError::InvalidParams));
+        assert_eq!(Ado::try_from(raw), Err(InvalidType(0x7A00005)));
     }
 
     #[test]

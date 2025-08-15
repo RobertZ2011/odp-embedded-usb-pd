@@ -7,7 +7,7 @@ use crate::ucsi::{CommandHeaderRaw, COMMAND_LEN};
 
 bitfield! {
     /// Argument for SET_NOTIFICATION_ENABLE see USCI spec 6.5.5
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub(super) struct NotificationEnableRaw(u32);
     impl Debug;
@@ -49,7 +49,7 @@ bitfield! {
 }
 
 /// Higher-level wrapper around [`SetNotificationEnableRaw`]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NotificationEnable(NotificationEnableRaw);
 
@@ -289,7 +289,7 @@ impl<Context> Decode<Context> for NotificationEnable {
 }
 
 /// Set notification enable command
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Args {
     /// Notification enable flags
