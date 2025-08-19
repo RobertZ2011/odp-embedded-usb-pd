@@ -7,7 +7,7 @@ use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bincode::{decode_from_slice, encode_into_slice};
 use bitfield::bitfield;
 
-use crate::PdError;
+use crate::{GlobalPortId, LocalPortId, PdError, PortId};
 
 pub mod cci;
 pub mod lpm;
@@ -116,12 +116,15 @@ impl From<CommandType> for u8 {
 /// UCSI commands
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Command {
+pub enum Command<T: PortId> {
     PpmCommand(ppm::Command),
-    LpmCommand(lpm::Command),
+    LpmCommand(lpm::Command<T>),
 }
 
-impl Command {
+pub type GlobalCommand = Command<GlobalPortId>;
+pub type LocalCommand = Command<LocalPortId>;
+
+impl<T: PortId> Command<T> {
     /// Returns the command type for this command
     pub const fn command_type(&self) -> CommandType {
         match self {
@@ -136,7 +139,7 @@ impl Command {
     }
 }
 
-impl<Context> Decode<Context> for Command {
+impl<Context, T: PortId> Decode<Context> for Command<T> {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let header = CommandHeader::decode(decoder)?;
         let mut decoder = decoder.with_context(header);
@@ -174,8 +177,8 @@ impl<Context> Decode<Context> for Command {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ResponseData {
-    PpmResponse(ppm::Response),
-    LpmResponse(lpm::Response),
+    PpmResponse(ppm::ResponseData),
+    LpmResponse(lpm::ResponseData),
 }
 
 impl ResponseData {
@@ -197,18 +200,39 @@ impl Encode for ResponseData {
 /// UCSI command response
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Response {
+pub struct Response<T: PortId> {
     /// CCI is produced by every command
-    pub cci: cci::Cci,
+    pub cci: cci::Cci<T>,
     /// Response data for the command
     pub data: Option<ResponseData>,
 }
 
-impl From<cci::Cci> for Response {
-    fn from(cci: cci::Cci) -> Self {
+impl<T: PortId> From<cci::Cci<T>> for Response<T> {
+    fn from(cci: cci::Cci<T>) -> Self {
         Self { cci, data: None }
     }
 }
+
+impl<T: PortId> From<ppm::Response<T>> for Response<T> {
+    fn from(response: ppm::Response<T>) -> Self {
+        Self {
+            cci: response.cci,
+            data: response.data.map(ResponseData::PpmResponse),
+        }
+    }
+}
+
+impl<T: PortId> From<lpm::Response<T>> for Response<T> {
+    fn from(response: lpm::Response<T>) -> Self {
+        Self {
+            cci: response.cci,
+            data: response.data.map(ResponseData::LpmResponse),
+        }
+    }
+}
+
+pub type GlobalResponse = Response<GlobalPortId>;
+pub type LocalResponse = Response<LocalPortId>;
 
 bitfield! {
     /// Common header shared by all UCSI commands
@@ -343,7 +367,7 @@ mod tests {
         assert_eq!(consumed, bytes.len());
         assert_eq!(
             ack_cc_ci,
-            Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
+            GlobalCommand::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
                 ack: ppm::ack_cc_ci::Ack::from(0x2)
             }))
         );
@@ -375,7 +399,7 @@ mod tests {
     #[test]
     fn test_ppm_response_encoding() {
         let (response_data, bytes) = ppm::get_capability::test::create_response_data();
-        let expected = ResponseData::PpmResponse(ppm::Response::GetCapability(response_data));
+        let expected = ResponseData::PpmResponse(ppm::ResponseData::GetCapability(response_data));
 
         let mut encoded_bytes = [0u8; ppm::get_capability::RESPONSE_DATA_LEN];
         let len = expected.encode_into_slice(&mut encoded_bytes).unwrap();
@@ -390,7 +414,7 @@ mod tests {
     #[test]
     fn test_lpm_response_encoding() {
         let (response_data, bytes) = lpm::get_connector_status::test::create_response_data();
-        let expected = ResponseData::LpmResponse(lpm::Response::GetConnectorStatus(response_data));
+        let expected = ResponseData::LpmResponse(lpm::ResponseData::GetConnectorStatus(response_data));
 
         let mut encoded_bytes = [0u8; lpm::get_connector_status::RESPONSE_DATA_LEN];
         let len = expected.encode_into_slice(&mut encoded_bytes).unwrap();

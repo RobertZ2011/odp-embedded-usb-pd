@@ -7,6 +7,26 @@ pub mod pdo;
 pub mod type_c;
 pub mod ucsi;
 
+/// Common port trait
+///
+/// Ports are identified by a numeric ID. However, a port may have a different numeric ID in different contexts.
+/// Newtypes can provide type-checking of this at compile time. This trait provides a way to work with port IDs in
+/// a generic manner.
+///
+/// This module provides traits for both defmt and non-defmt contexts.
+pub mod port_id {
+    /// Common port trait, see module documentation for more details
+    #[cfg(not(feature = "defmt"))]
+    pub trait PortId: Into<u8> + From<u8> + Copy + Clone + core::fmt::Debug + PartialEq + Eq {}
+
+    /// Common port trait, see module documentation for more details
+    #[cfg(feature = "defmt")]
+    pub trait PortId: Into<u8> + From<u8> + Copy + Clone + core::fmt::Debug + PartialEq + Eq + defmt::Format {}
+}
+
+/// Common port trait, see module documentation for more details
+pub use port_id::PortId;
+
 /// Port ID new type.
 ///
 /// This differs from [`GlobalPortId`] in that it refers to a port on a specific controller. If
@@ -14,17 +34,25 @@ pub mod ucsi;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(transparent)]
-pub struct PortId(pub u8);
+pub struct LocalPortId(pub u8);
 
-impl From<u8> for PortId {
+impl From<u8> for LocalPortId {
     fn from(port: u8) -> Self {
-        PortId(port)
+        LocalPortId(port)
     }
 }
 
+impl From<LocalPortId> for u8 {
+    fn from(port: LocalPortId) -> Self {
+        port.0
+    }
+}
+
+impl PortId for LocalPortId {}
+
 /// Global port ID, used to unique identify a port
 ///
-/// This differs from [`PortId`] in that it is not limited to the number of ports on a single
+/// This differs from [`LocalPortId`] in that it is not limited to the number of ports on a single
 /// controller. If there are multiple controllers, each port should have a unique global port ID.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -36,6 +64,14 @@ impl From<u8> for GlobalPortId {
         GlobalPortId(port)
     }
 }
+
+impl From<GlobalPortId> for u8 {
+    fn from(port: GlobalPortId) -> Self {
+        port.0
+    }
+}
+
+impl PortId for GlobalPortId {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
