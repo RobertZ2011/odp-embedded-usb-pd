@@ -4,8 +4,8 @@ use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bincode::{Decode, Encode};
 use bitfield::bitfield;
 
-use crate::ucsi::{CommandHeader, CommandType};
-use crate::GlobalPortId;
+use crate::ucsi::{cci, CommandHeader, CommandType};
+use crate::{GlobalPortId, LocalPortId, PortId};
 
 pub mod get_connector_status;
 
@@ -38,24 +38,25 @@ impl CommandData {
 /// LPM commands
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Command {
-    pub port: GlobalPortId,
+pub struct Command<T: PortId> {
+    pub port: T,
     pub operation: CommandData,
 }
 
-impl Command {
+impl<T: PortId> Command<T> {
     /// Returns the command type for this command
     pub const fn command_type(&self) -> CommandType {
         self.operation.command_type()
     }
 }
 
-impl Encode for Command {
+impl<T: PortId> Encode for Command<T> {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         CommandHeader::new(self.command_type(), 0).encode(encoder)?;
         match self.operation {
             CommandData::GetConnectorStatus => {
-                self.port.0.encode(encoder)?;
+                let raw_port: u8 = self.port.into();
+                raw_port.encode(encoder)?;
                 get_connector_status::Args.encode(encoder)
             }
             _ => Err(EncodeError::Other("Unsupported command")),
@@ -63,7 +64,7 @@ impl Encode for Command {
     }
 }
 
-impl Decode<CommandHeader> for Command {
+impl<T: PortId> Decode<CommandHeader> for Command<T> {
     fn decode<D: Decoder<Context = CommandHeader>>(decoder: &mut D) -> Result<Self, DecodeError> {
         match decoder.context().command() {
             CommandType::GetConnectorStatus => {
@@ -71,7 +72,7 @@ impl Decode<CommandHeader> for Command {
                 // Don't actually have any args, but need to consume command padding
                 let _args = get_connector_status::Args::decode(decoder)?;
                 Ok(Command {
-                    port: GlobalPortId(connector_number),
+                    port: From::from(connector_number),
                     operation: CommandData::GetConnectorStatus,
                 })
             }
@@ -84,32 +85,35 @@ impl Decode<CommandHeader> for Command {
     }
 }
 
-impl Decode<()> for Command {
+impl<T: PortId> Decode<()> for Command<T> {
     fn decode<D: Decoder<Context = ()>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let header = CommandHeader::decode(decoder)?;
         Command::decode(&mut decoder.with_context(header))
     }
 }
 
+pub type GlobalCommand = Command<GlobalPortId>;
+pub type LocalCommand = Command<LocalPortId>;
+
 /// LPM response data
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Response {
+pub enum ResponseData {
     GetConnectorStatus(get_connector_status::ResponseData),
 }
 
-impl Encode for Response {
+impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         match self {
-            Response::GetConnectorStatus(data) => data.encode(encoder),
+            ResponseData::GetConnectorStatus(data) => data.encode(encoder),
         }
     }
 }
 
-impl Decode<CommandType> for Response {
+impl Decode<CommandType> for ResponseData {
     fn decode<D: Decoder<Context = CommandType>>(decoder: &mut D) -> Result<Self, DecodeError> {
         match decoder.context() {
-            CommandType::GetConnectorStatus => Ok(Response::GetConnectorStatus(
+            CommandType::GetConnectorStatus => Ok(ResponseData::GetConnectorStatus(
                 get_connector_status::ResponseData::decode(decoder)?,
             )),
             command_type => Err(DecodeError::UnexpectedVariant {
@@ -120,6 +124,19 @@ impl Decode<CommandType> for Response {
         }
     }
 }
+
+/// LPM command response
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Response<T: PortId> {
+    /// CCI is produced by every command
+    pub cci: cci::Cci<T>,
+    /// Response data for the command
+    pub data: Option<ResponseData>,
+}
+
+pub type GlobalResponse = Response<GlobalPortId>;
+pub type LocalResponse = Response<LocalPortId>;
 
 bitfield! {
     /// Raw connector number
@@ -160,12 +177,12 @@ mod tests {
         bytes[0] = CommandType::GetConnectorStatus as u8;
         bytes[2] = 0x1;
 
-        let (get_connector_status, consumed): (Command, usize) =
+        let (get_connector_status, consumed): (GlobalCommand, usize) =
             decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
         assert_eq!(consumed, bytes.len());
         assert_eq!(
             get_connector_status,
-            Command {
+            GlobalCommand {
                 port: GlobalPortId(1),
                 operation: CommandData::GetConnectorStatus,
             }
