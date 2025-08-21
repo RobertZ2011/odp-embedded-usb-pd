@@ -12,19 +12,16 @@ pub mod ucsi;
 /// Ports are identified by a numeric ID. However, a port may have a different numeric ID in different contexts.
 /// Newtypes can provide type-checking of this at compile time. This trait provides a way to work with port IDs in
 /// a generic manner.
+#[cfg(not(feature = "defmt"))]
+pub trait PortId: Into<u8> + From<u8> + Copy + Clone + core::fmt::Debug + PartialEq + Eq {}
+
+/// Common port trait
 ///
-/// This module provides traits for both defmt and non-defmt contexts.
-pub mod port_id {
-    /// Common port trait, see [`self`] for details
-    #[cfg(not(feature = "defmt"))]
-    pub trait PortId: Into<u8> + From<u8> + Copy + Clone + core::fmt::Debug + PartialEq + Eq {}
-
-    /// Common port trait, see [`self`] for details
-    #[cfg(feature = "defmt")]
-    pub trait PortId: Into<u8> + From<u8> + Copy + Clone + core::fmt::Debug + PartialEq + Eq + defmt::Format {}
-}
-
-pub use port_id::PortId;
+/// Ports are identified by a numeric ID. However, a port may have a different numeric ID in different contexts.
+/// Newtypes can provide type-checking of this at compile time. This trait provides a way to work with port IDs in
+/// a generic manner.
+#[cfg(feature = "defmt")]
+pub trait PortId: Into<u8> + From<u8> + Copy + Clone + core::fmt::Debug + PartialEq + Eq + defmt::Format {}
 
 /// Port ID new type.
 ///
