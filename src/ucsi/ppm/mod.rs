@@ -1,4 +1,5 @@
-use crate::ucsi::{CommandHeader, CommandType};
+use crate::ucsi::{cci, CommandHeader, CommandType};
+use crate::{GlobalPortId, LocalPortId, PortId};
 
 pub mod ack_cc_ci;
 pub mod cancel;
@@ -94,22 +95,24 @@ impl Decode<()> for Command {
 /// PPM command response data
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Response {
+pub enum ResponseData {
     GetCapability(get_capability::ResponseData),
 }
 
-impl Encode for Response {
+impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         match self {
-            Response::GetCapability(data) => data.encode(encoder),
+            ResponseData::GetCapability(data) => data.encode(encoder),
         }
     }
 }
 
-impl Decode<CommandType> for Response {
+impl Decode<CommandType> for ResponseData {
     fn decode<D: Decoder<Context = CommandType>>(decoder: &mut D) -> Result<Self, DecodeError> {
         match decoder.context() {
-            CommandType::GetCapability => Ok(Response::GetCapability(get_capability::ResponseData::decode(decoder)?)),
+            CommandType::GetCapability => Ok(ResponseData::GetCapability(get_capability::ResponseData::decode(
+                decoder,
+            )?)),
             _ => Err(DecodeError::UnexpectedVariant {
                 type_name: "CommandType",
                 allowed: &AllowedEnumVariants::Allowed(&[CommandType::GetCapability as u32]),
@@ -118,6 +121,19 @@ impl Decode<CommandType> for Response {
         }
     }
 }
+
+/// PPM command response
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Response<T: PortId> {
+    /// CCI is produced by every command
+    pub cci: cci::Cci<T>,
+    /// Response data for the command
+    pub data: Option<ResponseData>,
+}
+
+pub type GlobalResponse = Response<GlobalPortId>;
+pub type LocalResponse = Response<LocalPortId>;
 
 #[cfg(test)]
 mod tests {

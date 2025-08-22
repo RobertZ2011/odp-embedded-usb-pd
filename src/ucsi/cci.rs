@@ -1,8 +1,10 @@
 use bitfield::bitfield;
 
+use crate::PortId;
+
 bitfield! {
     /// Command status and connect change indicator, see UCSI spec 4.2
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct CciRaw(u32);
     impl Debug;
@@ -36,151 +38,154 @@ bitfield! {
 }
 
 /// Higher-level wrapper around [`CciRaw`]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Cci(CciRaw);
+pub struct Cci<T: PortId> {
+    raw: CciRaw,
+    _marker: core::marker::PhantomData<T>,
+}
 
-impl Cci {
+impl<T: PortId> Cci<T> {
     /// Returns EOM status
     pub fn eom(&self) -> bool {
-        self.0.eom()
+        self.raw.eom()
     }
 
     /// Set EOM status
     pub fn set_eom(&mut self, eom: bool) -> &mut Self {
-        self.0.set_eom(eom);
+        self.raw.set_eom(eom);
         self
     }
 
     /// Returns connector change port
-    pub fn connector_change<T: From<u8>>(&self) -> T {
-        self.0.connector_change().into()
+    pub fn connector_change(&self) -> T {
+        self.raw.connector_change().into()
     }
 
     /// Set connector change port
-    pub fn set_connector_change<T: Into<u8>>(&mut self, port: T) -> &mut Self {
-        self.0.set_connector_change(port.into());
+    pub fn set_connector_change(&mut self, port: T) -> &mut Self {
+        self.raw.set_connector_change(port.into());
         self
     }
 
     /// Returns data length
     pub fn data_len(&self) -> usize {
-        self.0.data_len() as usize
+        self.raw.data_len() as usize
     }
 
     /// Set data length
     pub fn set_data_len(&mut self, len: usize) -> &mut Self {
-        self.0.set_data_len(len as u8);
+        self.raw.set_data_len(len as u8);
         self
     }
 
     /// Returns vendor message status
     pub fn vendor_message(&self) -> bool {
-        self.0.vendor_message()
+        self.raw.vendor_message()
     }
 
     /// Set vendor message status
     pub fn set_vendor_message(&mut self, vendor_message: bool) -> &mut Self {
-        self.0.set_vendor_message(vendor_message);
+        self.raw.set_vendor_message(vendor_message);
         self
     }
 
     /// Returns security request status
     pub fn security_req(&self) -> bool {
-        self.0.security_req()
+        self.raw.security_req()
     }
 
     /// Set security request status
     pub fn set_security_req(&mut self, security_req: bool) -> &mut Self {
-        self.0.set_security_req(security_req);
+        self.raw.set_security_req(security_req);
         self
     }
 
     /// Returns firmware update request status
     pub fn fw_update_req(&self) -> bool {
-        self.0.fw_update_req()
+        self.raw.fw_update_req()
     }
 
     /// Set firmware update request status
     pub fn set_fw_update_req(&mut self, fw_update_req: bool) -> &mut Self {
-        self.0.set_fw_update_req(fw_update_req);
+        self.raw.set_fw_update_req(fw_update_req);
         self
     }
 
     /// Returns command not supported status
     pub fn not_supported(&self) -> bool {
-        self.0.not_supported()
+        self.raw.not_supported()
     }
 
     /// Set command not supported status
     pub fn set_not_supported(&mut self, not_supported: bool) -> &mut Self {
-        self.0.set_not_supported(not_supported);
+        self.raw.set_not_supported(not_supported);
         self
     }
 
     /// Returns cancel complete status
     pub fn cancel_complete(&self) -> bool {
-        self.0.cancel_complete()
+        self.raw.cancel_complete()
     }
 
     /// Set cancel complete status
     pub fn set_cancel_complete(&mut self, cancel_complete: bool) -> &mut Self {
-        self.0.set_cancel_complete(cancel_complete);
+        self.raw.set_cancel_complete(cancel_complete);
         self
     }
 
     /// Returns PPM reset complete status
     pub fn reset_complete(&self) -> bool {
-        self.0.reset_complete()
+        self.raw.reset_complete()
     }
 
     /// Set PPM reset complete status
     pub fn set_reset_complete(&mut self, reset_complete: bool) -> &mut Self {
-        self.0.set_reset_complete(reset_complete);
+        self.raw.set_reset_complete(reset_complete);
         self
     }
 
     /// Returns busy status
     pub fn busy(&self) -> bool {
-        self.0.busy()
+        self.raw.busy()
     }
 
     /// Set busy status
     pub fn set_busy(&mut self, busy: bool) -> &mut Self {
-        self.0.set_busy(busy);
+        self.raw.set_busy(busy);
         self
     }
 
     /// Returns acknowledgment command status
     pub fn ack_command(&self) -> bool {
-        self.0.ack_command()
+        self.raw.ack_command()
     }
 
     /// Set acknowledgment command status
     pub fn set_ack_command(&mut self, ack_command: bool) -> &mut Self {
-        self.0.set_ack_command(ack_command);
+        self.raw.set_ack_command(ack_command);
         self
     }
 
     /// Returns command error status
     pub fn error(&self) -> bool {
-        self.0.error()
+        self.raw.error()
     }
 
     /// Set command error status
     pub fn set_error(&mut self, error: bool) -> &mut Self {
-        self.0.set_error(error);
+        self.raw.set_error(error);
         self
     }
 
     /// Returns command complete status
     pub fn cmd_complete(&self) -> bool {
-        self.0.cmd_complete()
+        self.raw.cmd_complete()
     }
 
     /// Set command complete status
     pub fn set_cmd_complete(&mut self, cmd_complete: bool) -> &mut Self {
-        self.0.set_cmd_complete(cmd_complete);
+        self.raw.set_cmd_complete(cmd_complete);
         self
     }
 
@@ -205,20 +210,29 @@ impl Cci {
     }
 }
 
-impl From<u32> for Cci {
+impl<T: PortId> From<CciRaw> for Cci<T> {
+    fn from(raw: CciRaw) -> Self {
+        Cci {
+            raw,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: PortId> From<u32> for Cci<T> {
     fn from(raw: u32) -> Self {
-        Cci(CciRaw(raw))
+        Cci::from(CciRaw(raw))
     }
 }
 
-impl From<Cci> for u32 {
-    fn from(cci: Cci) -> Self {
-        cci.0 .0
+impl<T: PortId> From<Cci<T>> for u32 {
+    fn from(cci: Cci<T>) -> Self {
+        cci.raw.0
     }
 }
 
-impl Default for Cci {
+impl<T: PortId> Default for Cci<T> {
     fn default() -> Self {
-        Cci(CciRaw(0))
+        Cci::from(CciRaw(0))
     }
 }
