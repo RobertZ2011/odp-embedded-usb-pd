@@ -152,7 +152,7 @@ impl<Context, T: PortId> Decode<Context> for Command<T> {
                 let command = ppm::Command::decode(&mut decoder)?;
                 Ok(Command::PpmCommand(command))
             }
-            CommandType::GetConnectorStatus => {
+            CommandType::GetConnectorStatus | CommandType::GetConnectorCapability => {
                 let command = lpm::Command::decode(&mut decoder)?;
                 Ok(Command::LpmCommand(command))
             }

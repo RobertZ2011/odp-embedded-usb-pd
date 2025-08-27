@@ -407,13 +407,15 @@ impl From<ResponseData> for u32 {
 
 impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        u32::from(*self).encode(encoder)
+        // TODO: fixup when we support different UCSI versions
+        (u32::from(*self) as u16).encode(encoder)
     }
 }
 
 impl<Context> Decode<Context> for ResponseData {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        Ok(ResponseData::from(u32::decode(decoder)?))
+        // TODO: fixup when we support different UCSI versions
+        Ok(ResponseData::from(u16::decode(decoder)? as u32))
     }
 }
 
