@@ -105,7 +105,7 @@ impl StateMachine {
 
         let (next_state, output) = match (self.state, input) {
             // Idle(false) transitions
-            (Idle(false), NotificationEnabled) => (Idle(true), None),
+            (Idle(false), NotificationEnabled) => (Idle(true), Some(OpmNotifyCommandComplete)),
             (Idle(false), BusyChanged) => (Busy(false), None),
             (Idle(false), CommandImmediate | CommandAsync) => (Idle(false), None),
 
