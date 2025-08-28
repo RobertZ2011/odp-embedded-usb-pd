@@ -58,6 +58,8 @@ pub enum Input {
 pub enum Output {
     /// Notify OPM that command completed
     OpmNotifyCommandComplete,
+    /// Notify that ack was received
+    OpmNotifyAckComplete,
     /// Notify OPM of async event
     OpmNotifyAsyncEvent,
     /// Notify OPM of PPM reset
@@ -105,7 +107,7 @@ impl StateMachine {
 
         let (next_state, output) = match (self.state, input) {
             // Idle(false) transitions
-            (Idle(false), NotificationEnabled) => (Idle(true), Some(OpmNotifyCommandComplete)),
+            (Idle(false), NotificationEnabled) => (WaitForCommandCompleteAck, Some(OpmNotifyCommandComplete)),
             (Idle(false), BusyChanged) => (Busy(false), None),
             (Idle(false), CommandImmediate | CommandAsync) => (Idle(false), None),
 
@@ -126,7 +128,7 @@ impl StateMachine {
             }
 
             // WaitForCommandCompleteAck transitions
-            (WaitForCommandCompleteAck, CommandCompleteAck) => (Idle(true), None),
+            (WaitForCommandCompleteAck, CommandCompleteAck) => (Idle(true), Some(OpmNotifyAckComplete)),
 
             // WaitForAsyncEventAck transitions
             (WaitForAsyncEventAck, AsyncEventAck) => (Idle(true), None),
