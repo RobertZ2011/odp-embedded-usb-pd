@@ -24,3 +24,13 @@ pub enum Cmd {
     /// Custom vendor SVID Commands start here
     SvidCmdStart = 16,
 }
+
+/// SVID newtype
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Svid(pub u16);
+
+/// Mode ID newtype
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ModeId(pub u32);
