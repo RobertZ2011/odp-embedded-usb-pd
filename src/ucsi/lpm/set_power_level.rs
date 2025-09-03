@@ -146,11 +146,11 @@ impl Args {
 
         match lsb_control {
             true => {
-                self.0.set_output_voltage((output_voltage / MV25_UNIT) as u16);
+                self.0.set_output_voltage(output_voltage / MV25_UNIT);
                 self.0.set_max_power((max_power / MW1000_UNIT as u16) as u8)
             }
             false => {
-                self.0.set_output_voltage((output_voltage / MV20_UNIT) as u16);
+                self.0.set_output_voltage(output_voltage / MV20_UNIT);
                 self.0.set_max_power((max_power / MW500_UNIT as u16) as u8);
             }
         }

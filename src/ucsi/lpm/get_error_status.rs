@@ -226,7 +226,7 @@ impl From<u16> for Information {
 
 impl From<Information> for u16 {
     fn from(info: Information) -> Self {
-        info.0 .0 as u16
+        info.0 .0
     }
 }
 
