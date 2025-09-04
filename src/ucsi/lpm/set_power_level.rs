@@ -205,9 +205,9 @@ mod test {
         // USB default current
         // 100 mA operating current
         // 60 mV output voltage
-        let encoded: [u8; 6] = [0x83, 0x02, 0x22, 0xC0, 0x00, 0x00];
+        let encoded: [u8; COMMAND_DATA_LEN] = [0x83, 0x02, 0x22, 0xC0, 0x00, 0x00];
         let (decoded, size): (Args, usize) = decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(size, 6);
+        assert_eq!(size, COMMAND_DATA_LEN);
 
         let expected = *Args::default()
             .set_connector_number(3)
