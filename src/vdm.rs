@@ -25,12 +25,12 @@ pub enum Cmd {
     SvidCmdStart = 16,
 }
 
-/// SVID newtype
+/// Standard or Vendor ID (SVID) newtype, see PD spec 6.4.4.2.1
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Svid(pub u16);
 
-/// Mode ID newtype
+/// Altmode ID newtype for discover modes command and others, see PD spec 6.4.4.3.3
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ModeId(pub u32);
+pub struct AltModeId(pub u32);

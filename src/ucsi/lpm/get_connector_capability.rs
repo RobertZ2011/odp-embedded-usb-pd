@@ -453,7 +453,7 @@ mod test {
         // Byte 1
         // Bits 8-13 all set
         // Extended operation mode usb4_gen2 + epr_source
-        let bytes = [0xA1, 0xFF];
+        let bytes: [u8; RESPONSE_DATA_LEN] = [0xA1, 0xFF];
 
         let expected = *ResponseData::default()
             .set_operation_mode(

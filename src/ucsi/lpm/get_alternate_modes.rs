@@ -9,7 +9,7 @@ use bitfield::bitfield;
 use super::Recipient;
 use crate::ucsi::lpm::InvalidRecipient;
 use crate::ucsi::{CommandHeaderRaw, COMMAND_LEN};
-use crate::vdm::{ModeId, Svid};
+use crate::vdm::{AltModeId, Svid};
 
 /// Data length for the GET_ALTERNATE_MODES command response
 pub const RESPONSE_DATA_LEN: usize = 12;
@@ -127,95 +127,42 @@ impl<Context> Decode<Context> for Args {
     }
 }
 
-bitfield! {
-    /// Raw GET_ALTERNATE_MODES response bitfield
-    #[derive(Copy, Clone, Default, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct ResponseDataRaw([u8]);
-    impl Debug;
-
-    /// SVID for alternate mode 0
-    pub u16, svid0, set_svid0: 15, 0;
-    /// Mode ID for alternate mode 0
-    pub u32, mid0, set_mid0: 47, 16;
-    /// SVID for alternate mode 1
-    pub u16, svid1, set_svid1: 63, 48;
-    /// Mode ID for alternate mode 1
-    pub u32, mid1, set_mid1: 95, 64;
+/// Representation of a single alt-mode
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AltMode {
+    pub svid: Svid,
+    pub mid: AltModeId,
 }
+
+/// Length of the alternate modes array
+pub const ALT_MODES_LEN: usize = 2;
 
 /// GET_ALTERNATE_MODES response data
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResponseData {
-    pub svid0: Svid,
-    pub mid0: ModeId,
-    pub svid1: Svid,
-    pub mid1: ModeId,
-}
-
-impl ResponseData {
-    /// Returns the SVID at the specified index or None
-    pub fn svid(&self, index: usize) -> Option<Svid> {
-        match index {
-            0 => Some(self.svid0),
-            1 => Some(self.svid1),
-            _ => None,
-        }
-    }
-
-    /// Sets the SVID at the specified index or returns None
-    pub fn set_svid(&mut self, index: usize, svid: Svid) -> Option<()> {
-        match index {
-            0 => self.svid0 = svid,
-            1 => self.svid1 = svid,
-            _ => return None,
-        }
-        Some(())
-    }
-
-    /// Returns the MID at the specified index or None
-    pub fn mid(&self, index: usize) -> Option<ModeId> {
-        match index {
-            0 => Some(self.mid0),
-            1 => Some(self.mid1),
-            _ => None,
-        }
-    }
-
-    /// Sets the MID at the specified index or returns None
-    pub fn set_mid(&mut self, index: usize, mid: ModeId) -> Option<()> {
-        match index {
-            0 => self.mid0 = mid,
-            1 => self.mid1 = mid,
-            _ => return None,
-        }
-        Some(())
-    }
+    pub alt_modes: [AltMode; ALT_MODES_LEN],
 }
 
 impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.svid0.0.encode(encoder)?;
-        self.mid0.0.encode(encoder)?;
-        self.svid1.0.encode(encoder)?;
-        self.mid1.0.encode(encoder)?;
+        for alt_mode in &self.alt_modes {
+            alt_mode.svid.0.encode(encoder)?;
+            alt_mode.mid.0.encode(encoder)?;
+        }
         Ok(())
     }
 }
 
 impl<Context> Decode<Context> for ResponseData {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let svid0 = u16::decode(decoder)?;
-        let mid0 = u32::decode(decoder)?;
-        let svid1 = u16::decode(decoder)?;
-        let mid1 = u32::decode(decoder)?;
-        Ok(ResponseData {
-            svid0: Svid(svid0),
-            mid0: ModeId(mid0),
-            svid1: Svid(svid1),
-            mid1: ModeId(mid1),
-        })
+        let mut alt_modes = [AltMode::default(); ALT_MODES_LEN];
+        for alt_mode in &mut alt_modes {
+            alt_mode.svid = Svid(u16::decode(decoder)?);
+            alt_mode.mid = AltModeId(u32::decode(decoder)?);
+        }
+        Ok(ResponseData { alt_modes })
     }
 }
 
@@ -250,10 +197,10 @@ mod test {
         assert_eq!(size, RESPONSE_DATA_LEN);
 
         let mut expected = ResponseData::default();
-        expected.set_svid(0, Svid(0x1234));
-        expected.set_mid(0, ModeId(0x12345678));
-        expected.set_svid(1, Svid(0x3412));
-        expected.set_mid(1, ModeId(0x78563412));
+        expected.alt_modes[0].svid = Svid(0x1234);
+        expected.alt_modes[0].mid = AltModeId(0x12345678);
+        expected.alt_modes[1].svid = Svid(0x3412);
+        expected.alt_modes[1].mid = AltModeId(0x78563412);
         assert_eq!(decoded, expected);
     }
 }
