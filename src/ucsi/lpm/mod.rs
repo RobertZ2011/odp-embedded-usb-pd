@@ -9,6 +9,9 @@ use crate::{GlobalPortId, LocalPortId, PortId};
 
 pub mod get_connector_capability;
 pub mod get_connector_status;
+pub mod get_error_status;
+pub mod set_new_cam;
+pub mod set_power_level;
 
 /// Connector reset types
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -25,6 +28,9 @@ pub enum CommandData {
     ConnectorReset(ResetType),
     GetConnectorStatus,
     GetConnectorCapability,
+    SetPowerLevel(set_power_level::Args),
+    SetNewCam(set_new_cam::Args),
+    GetErrorStatus,
 }
 
 impl CommandData {
@@ -34,6 +40,9 @@ impl CommandData {
             CommandData::ConnectorReset(_) => CommandType::ConnectorReset,
             CommandData::GetConnectorStatus => CommandType::GetConnectorStatus,
             CommandData::GetConnectorCapability => CommandType::GetConnectorCapability,
+            CommandData::SetPowerLevel(_) => CommandType::SetPowerLevel,
+            CommandData::SetNewCam(_) => CommandType::SetNewCam,
+            CommandData::GetErrorStatus => CommandType::GetErrorStatus,
         }
     }
 }
@@ -67,6 +76,19 @@ impl<T: PortId> Encode for Command<T> {
                 raw_port.encode(encoder)?;
                 get_connector_capability::Args.encode(encoder)
             }
+            CommandData::SetPowerLevel(args) => {
+                // The connector number for this command is combined with its arguments, let it handle everything
+                args.encode(encoder)
+            }
+            CommandData::SetNewCam(args) => {
+                // The connector number for this command is combined with its arguments, let it handle everything
+                args.encode(encoder)
+            }
+            CommandData::GetErrorStatus => {
+                let raw_port: u8 = self.port.into();
+                raw_port.encode(encoder)?;
+                get_error_status::Args.encode(encoder)
+            }
             _ => Err(EncodeError::Other("Unsupported command")),
         }
     }
@@ -91,6 +113,31 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
                 Ok(Command {
                     port: From::from(connector_number),
                     operation: CommandData::GetConnectorCapability,
+                })
+            }
+            CommandType::SetPowerLevel => {
+                // The connector number is combined with arguments, let it handle everything
+                let args = set_power_level::Args::decode(decoder)?;
+                Ok(Command {
+                    port: From::from(args.connector_number()),
+                    operation: CommandData::SetPowerLevel(args),
+                })
+            }
+            CommandType::SetNewCam => {
+                // The connector number is combined with arguments, let it handle everything
+                let args = set_new_cam::Args::decode(decoder)?;
+                Ok(Command {
+                    port: From::from(args.connector_number),
+                    operation: CommandData::SetNewCam(args),
+                })
+            }
+            CommandType::GetErrorStatus => {
+                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
+                // Don't actually have any args, but need to consume command padding
+                let _args = get_error_status::Args::decode(decoder)?;
+                Ok(Command {
+                    port: From::from(connector_number),
+                    operation: CommandData::GetErrorStatus,
                 })
             }
             command_type => Err(DecodeError::UnexpectedVariant {
@@ -118,6 +165,7 @@ pub type LocalCommand = Command<LocalPortId>;
 pub enum ResponseData {
     GetConnectorStatus(get_connector_status::ResponseData),
     GetConnectorCapability(get_connector_capability::ResponseData),
+    GetErrorStatus(get_error_status::ResponseData),
 }
 
 impl Encode for ResponseData {
@@ -125,6 +173,7 @@ impl Encode for ResponseData {
         match self {
             ResponseData::GetConnectorStatus(data) => data.encode(encoder),
             ResponseData::GetConnectorCapability(data) => data.encode(encoder),
+            ResponseData::GetErrorStatus(data) => data.encode(encoder),
         }
     }
 }
@@ -138,6 +187,9 @@ impl Decode<CommandType> for ResponseData {
             CommandType::GetConnectorCapability => Ok(ResponseData::GetConnectorCapability(
                 get_connector_capability::ResponseData::decode(decoder)?,
             )),
+            CommandType::GetErrorStatus => Ok(ResponseData::GetErrorStatus(get_error_status::ResponseData::decode(
+                decoder,
+            )?)),
             command_type => Err(DecodeError::UnexpectedVariant {
                 type_name: "CommandType",
                 allowed: &AllowedEnumVariants::Allowed(&[CommandType::GetConnectorStatus as u32]),
@@ -192,6 +244,7 @@ mod tests {
 
     use super::*;
     use crate::ucsi::COMMAND_LEN;
+    use crate::PowerRole;
 
     #[test]
     fn test_decode_get_connector_status() {
@@ -225,6 +278,69 @@ mod tests {
             GlobalCommand {
                 port: GlobalPortId(1),
                 operation: CommandData::GetConnectorCapability,
+            }
+        );
+    }
+
+    #[test]
+    fn test_decode_set_power_level() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::SetPowerLevel as u8;
+        bytes[2] = 0x81;
+
+        let (set_power_level, consumed): (GlobalCommand, usize) =
+            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(
+            set_power_level,
+            GlobalCommand {
+                port: GlobalPortId(1),
+                operation: CommandData::SetPowerLevel(
+                    *set_power_level::Args::default()
+                        .set_connector_number(1)
+                        .set_power_role(PowerRole::Source)
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn test_decode_set_new_cam() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::SetNewCam as u8;
+        bytes[2] = 0x1;
+
+        let (set_new_cam, consumed): (GlobalCommand, usize) =
+            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(
+            set_new_cam,
+            GlobalCommand {
+                port: GlobalPortId(1),
+                operation: CommandData::SetNewCam(set_new_cam::Args {
+                    connector_number: 1,
+                    enter: false,
+                    am_offset: 0,
+                    am_specific: 0,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_decode_get_error_status() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::GetErrorStatus as u8;
+        bytes[2] = 0x1;
+
+        let (get_error_status, consumed): (GlobalCommand, usize) =
+            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(
+            get_error_status,
+            GlobalCommand {
+                port: GlobalPortId(1),
+                operation: CommandData::GetErrorStatus,
             }
         );
     }
