@@ -20,12 +20,16 @@ pub const MA50_UNIT: u16 = 50;
 pub const MV5_UNIT: u16 = 5;
 /// 20 mV unit
 pub const MV20_UNIT: u16 = 20;
+/// 25 mV unit
+pub const MV25_UNIT: u16 = 25;
 /// 50 mV unit
 pub const MV50_UNIT: u16 = 50;
 /// 100 mV unit
 pub const MV100_UNIT: u16 = 100;
 /// 250 mV unit
 pub const MW250_UNIT: u32 = 250;
+/// 500 mW unit
+pub const MW500_UNIT: u32 = 500;
 /// 1000 mW unit
 pub const MW1000_UNIT: u32 = 1000;
 
