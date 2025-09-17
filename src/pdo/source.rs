@@ -59,6 +59,14 @@ impl Common for Pdo {
     }
 }
 
+impl From<Pdo> for super::Pdo {
+    fn from(pdo: Pdo) -> Self {
+        super::Pdo::Source(pdo)
+    }
+}
+
+impl RoleCommon for Pdo {}
+
 impl TryFrom<u32> for Pdo {
     type Error = ExpectedPdo;
 
@@ -68,6 +76,17 @@ impl TryFrom<u32> for Pdo {
             PdoKind::Battery => BatteryData::try_from(value).map(Pdo::Battery),
             PdoKind::Variable => VariableData::try_from(value).map(Pdo::Variable),
             PdoKind::Augmented => Apdo::try_from(value).map(Pdo::Augmented),
+        }
+    }
+}
+
+impl From<Pdo> for u32 {
+    fn from(value: Pdo) -> Self {
+        match value {
+            Pdo::Fixed(data) => data.into(),
+            Pdo::Battery(data) => data.into(),
+            Pdo::Variable(data) => data.into(),
+            Pdo::Augmented(data) => data.into(),
         }
     }
 }
@@ -180,6 +199,20 @@ impl From<u8> for FixedFlags {
     }
 }
 
+impl From<FixedFlags> for u8 {
+    fn from(value: FixedFlags) -> Self {
+        let mut raw = FixedFlagsRaw(0);
+        raw.set_dual_role_power(value.dual_role_power);
+        raw.set_usb_suspend_supported(value.usb_suspend_supported);
+        raw.set_unconstrained_power(value.unconstrained_power);
+        raw.set_usb_comms_capable(value.usb_comms_capable);
+        raw.set_dual_role_data(value.dual_role_data);
+        raw.set_unchunked_extended_messages_support(value.unchunked_extended_messages_support);
+        raw.set_epr_capable(value.epr_capable);
+        raw.0
+    }
+}
+
 bitfield! {
     /// Raw fixed supply PDO data
     #[derive(Copy, Clone, PartialEq, Eq)]
@@ -240,6 +273,18 @@ impl TryFrom<u32> for FixedData {
     }
 }
 
+impl From<FixedData> for u32 {
+    fn from(data: FixedData) -> Self {
+        let mut raw = FixedRaw(0);
+        raw.set_kind(PdoKind::Fixed as u8);
+        raw.set_flags(data.flags.into());
+        raw.set_peak_current(data.peak_current.into());
+        raw.set_voltage(data.voltage_mv / MV50_UNIT);
+        raw.set_current(data.current_ma / MA10_UNIT);
+        raw.0
+    }
+}
+
 bitfield! {
     /// Raw battery PDO data
     #[derive(Copy, Clone, PartialEq, Eq)]
@@ -292,6 +337,17 @@ impl TryFrom<u32> for BatteryData {
                 raw: value,
             })
         }
+    }
+}
+
+impl From<BatteryData> for u32 {
+    fn from(data: BatteryData) -> Self {
+        let mut raw = BatteryRaw(0);
+        raw.set_kind(PdoKind::Battery as u8);
+        raw.set_max_voltage(data.max_voltage_mv / MV50_UNIT);
+        raw.set_min_voltage(data.min_voltage_mv / MV50_UNIT);
+        raw.set_max_power(data.max_power_mw / MW250_UNIT);
+        raw.0
     }
 }
 
@@ -350,6 +406,17 @@ impl TryFrom<u32> for VariableData {
     }
 }
 
+impl From<VariableData> for u32 {
+    fn from(data: VariableData) -> Self {
+        let mut raw = VariableRaw(0);
+        raw.set_kind(PdoKind::Variable as u8);
+        raw.set_max_voltage(data.max_voltage_mv / MV50_UNIT);
+        raw.set_min_voltage(data.min_voltage_mv / MV50_UNIT);
+        raw.set_max_current(data.max_current_ma / MA10_UNIT);
+        raw.0
+    }
+}
+
 /// Augmented PDO
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -380,6 +447,16 @@ impl TryFrom<u32> for Apdo {
             ApdoKind::SprPps => SprPpsData::try_from(value).map(Apdo::SprPps),
             ApdoKind::EprAvs => EprAvsData::try_from(value).map(Apdo::EprAvs),
             ApdoKind::SprAvs => SprAvsData::try_from(value).map(Apdo::SprAvs),
+        }
+    }
+}
+
+impl From<Apdo> for u32 {
+    fn from(value: Apdo) -> Self {
+        match value {
+            Apdo::SprPps(data) => data.into(),
+            Apdo::EprAvs(data) => data.into(),
+            Apdo::SprAvs(data) => data.into(),
         }
     }
 }
@@ -445,6 +522,19 @@ impl TryFrom<u32> for SprPpsData {
     }
 }
 
+impl From<SprPpsData> for u32 {
+    fn from(data: SprPpsData) -> Self {
+        let mut raw = SprPpsRaw(0);
+        raw.set_kind(PdoKind::Augmented as u8);
+        raw.set_apdo_kind(ApdoKind::SprPps as u8);
+        raw.set_pps_power_limited(data.pps_power_limited as u8);
+        raw.set_max_voltage(data.max_voltage_mv / MV100_UNIT);
+        raw.set_min_voltage(data.min_voltage_mv / MV100_UNIT);
+        raw.set_max_current(data.max_current_ma / MA50_UNIT);
+        raw.0
+    }
+}
+
 bitfield! {
     /// Raw EPR adjustable voltage supply data
     #[derive(Copy, Clone, PartialEq, Eq)]
@@ -506,6 +596,19 @@ impl TryFrom<u32> for EprAvsData {
     }
 }
 
+impl From<EprAvsData> for u32 {
+    fn from(data: EprAvsData) -> Self {
+        let mut raw = EprAvsRaw(0);
+        raw.set_kind(PdoKind::Augmented as u8);
+        raw.set_apdo_kind(ApdoKind::EprAvs as u8);
+        raw.set_peak_current(data.peak_current.into());
+        raw.set_max_voltage(data.max_voltage_mv / MV100_UNIT);
+        raw.set_min_voltage(data.min_voltage_mv / MV100_UNIT);
+        raw.set_pdp(data.pdp_mw / MW1000_UNIT);
+        raw.0
+    }
+}
+
 bitfield! {
     /// Raw SPR adjustable voltage supply data
     #[derive(Copy, Clone, PartialEq, Eq)]
@@ -559,5 +662,17 @@ impl TryFrom<u32> for SprAvsData {
                 raw: value,
             }),
         }
+    }
+}
+
+impl From<SprAvsData> for u32 {
+    fn from(data: SprAvsData) -> Self {
+        let mut raw = SprAvsRaw(0);
+        raw.set_kind(PdoKind::Augmented as u8);
+        raw.set_apdo_kind(ApdoKind::SprAvs as u8);
+        raw.set_peak_current(data.peak_current.into());
+        raw.set_max_current_15v(data.max_current_15v_ma / MA10_UNIT);
+        raw.set_max_current_20v(data.max_current_20v_ma / MA10_UNIT);
+        raw.0
     }
 }

@@ -135,7 +135,7 @@ impl TryFrom<u32> for ApdoKind {
 }
 
 /// Common PDO trait
-pub trait Common {
+pub trait Common: Copy + Clone + PartialEq + Eq + Into<Pdo> + Into<u32> {
     /// Get the PDO kind
     fn kind(&self) -> PdoKind;
     /// Get the APDO kind
@@ -145,6 +145,10 @@ pub trait Common {
     /// Return true if the PDO has unconstrained power
     fn unconstrained_power(&self) -> bool;
 }
+
+/// This trait is for PDO values that have a definite power role. The power role of a PDO
+/// is not contained in the PDO itself so [`Common`] cannot have `TryFrom<u32>` as a supertrait.
+pub trait RoleCommon: Common + Default + TryFrom<u32, Error = ExpectedPdo> {}
 
 /// Top-level PDO type
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -180,6 +184,15 @@ impl Common for Pdo {
         match self {
             Pdo::Source(pdo) => pdo.unconstrained_power(),
             Pdo::Sink(pdo) => pdo.unconstrained_power(),
+        }
+    }
+}
+
+impl From<Pdo> for u32 {
+    fn from(value: Pdo) -> Self {
+        match value {
+            Pdo::Source(data) => data.into(),
+            Pdo::Sink(data) => data.into(),
         }
     }
 }
