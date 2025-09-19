@@ -57,7 +57,7 @@ impl defmt::Format for PowerPathStatus {
 /// Alternate Modes are vendor-defined therefore the meaning of the `userX` getters, such as
 /// [`AltMode::user0()`], are defined by the particular driver. Additionally, common alternate
 /// modes are defined and should be used by drivers that support them.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AltMode(inner::AltMode);
 
 impl core::fmt::Debug for AltMode {
@@ -169,7 +169,7 @@ mod inner {
     }
 
     bitfield! {
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Default, PartialEq, Eq)]
         pub struct AltMode(u8);
         impl new;
         u8;
