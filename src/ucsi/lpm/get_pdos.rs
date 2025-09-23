@@ -209,20 +209,16 @@ pub struct ResponseData {
 }
 
 impl ResponseData {
-    pub fn iter(&self) -> impl Iterator<Item = u32> + '_ {
-        self.raw.iter().copied().take_while(|&pdo| pdo != 0)
+    /// Iterator over valid PDOs
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
+        let last_pdo = self.raw.iter().position(|&pdo| pdo == 0).unwrap_or(self.raw.len());
+        self.raw.as_slice()[..last_pdo].iter().copied()
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut u32> + '_ {
-        self.raw.iter_mut().take_while(|pdo| **pdo != 0)
-    }
-
-    pub fn len(&self) -> usize {
-        self.iter().count()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// Mutable iterator over valid PDOs
+    pub fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = &mut u32> + '_ {
+        let last_pdo = self.raw.iter().position(|&pdo| pdo == 0).unwrap_or(self.raw.len());
+        self.raw.as_mut_slice()[..last_pdo].iter_mut()
     }
 }
 
@@ -282,5 +278,50 @@ mod test {
             .set_role(PowerRole::Source)
             .set_source_capability_type(SourceCapabilityType::Maximum);
         assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn test_response_iterator() {
+        let response = ResponseData {
+            raw: [0x12, 0x34, 0x56, 0x00],
+        };
+        let mut iter = response.iter();
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next(), Some(0x12));
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(0x34));
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next(), Some(0x56));
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn test_response_iterator_empty() {
+        let response = ResponseData { raw: [0x00; MAX_PDOS] };
+        let mut iter = response.iter();
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn test_response_iterator_full() {
+        let response = ResponseData {
+            raw: [0x12, 0x34, 0x56, 0x78],
+        };
+        let mut iter = response.iter();
+        assert_eq!(iter.len(), 4);
+        assert_eq!(iter.next(), Some(0x12));
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next(), Some(0x34));
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(0x56));
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next(), Some(0x78));
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
     }
 }
