@@ -33,6 +33,9 @@ pub const MW500_UNIT: u32 = 500;
 /// 1000 mW unit
 pub const MW1000_UNIT: u32 = 1000;
 
+/// Length of a PDO in bytes
+pub const PDO_LEN: usize = 4;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PdoKind {
