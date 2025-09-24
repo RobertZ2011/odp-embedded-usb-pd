@@ -125,12 +125,21 @@ impl Args {
     }
 
     pub fn num_pdos(&self) -> u8 {
-        self.0.num_pdos()
+        // +1 as per UCSI spec
+        self.0.num_pdos() + 1
     }
 
-    pub fn set_num_pdos(&mut self, num_pdos: u8) -> &mut Self {
-        self.0.set_num_pdos(num_pdos);
-        self
+    /// Sets the number of PDOs to retrieve, must be in range 1..=MAX_PDOS
+    ///
+    /// Returns `None` if the value is out of range
+    pub fn set_num_pdos(&mut self, num_pdos: u8) -> Option<&mut Self> {
+        if num_pdos == 0 || num_pdos > MAX_PDOS as u8 {
+            return None;
+        }
+
+        // -1 as per UCSI spec
+        self.0.set_num_pdos(num_pdos - 1);
+        Some(self)
     }
 
     pub fn role(&self) -> PowerRole {
@@ -196,7 +205,21 @@ impl<Context> Decode<Context> for Args {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResponseData {
-    pub raw: [u32; MAX_PDOS],
+    raw: [u32; MAX_PDOS],
+}
+
+impl ResponseData {
+    /// Iterator over valid PDOs
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
+        let last_pdo = self.raw.iter().position(|&pdo| pdo == 0).unwrap_or(self.raw.len());
+        self.raw.as_slice()[..last_pdo].iter().copied()
+    }
+
+    /// Mutable iterator over valid PDOs
+    pub fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = &mut u32> + '_ {
+        let last_pdo = self.raw.iter().position(|&pdo| pdo == 0).unwrap_or(self.raw.len());
+        self.raw.as_mut_slice()[..last_pdo].iter_mut()
+    }
 }
 
 impl Encode for ResponseData {
@@ -242,7 +265,7 @@ mod test {
     #[test]
     fn test_decode_args() {
         // Partner, connector 3, 1 PDO, source, maximum capabilities, offset 4
-        let encoded: [u8; 6] = [0x83, 0x04, 0x15, 0x00, 0x00, 0x00];
+        let encoded: [u8; 6] = [0x83, 0x04, 0x14, 0x00, 0x00, 0x00];
         let (decoded, size): (Args, usize) = decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
         assert_eq!(size, 6);
 
@@ -251,8 +274,54 @@ mod test {
             .set_partner(true)
             .set_pdo_offset(4)
             .set_num_pdos(1)
+            .unwrap()
             .set_role(PowerRole::Source)
             .set_source_capability_type(SourceCapabilityType::Maximum);
         assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn test_response_iterator() {
+        let response = ResponseData {
+            raw: [0x12, 0x34, 0x56, 0x00],
+        };
+        let mut iter = response.iter();
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next(), Some(0x12));
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(0x34));
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next(), Some(0x56));
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn test_response_iterator_empty() {
+        let response = ResponseData { raw: [0x00; MAX_PDOS] };
+        let mut iter = response.iter();
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn test_response_iterator_full() {
+        let response = ResponseData {
+            raw: [0x12, 0x34, 0x56, 0x78],
+        };
+        let mut iter = response.iter();
+        assert_eq!(iter.len(), 4);
+        assert_eq!(iter.next(), Some(0x12));
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next(), Some(0x34));
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(0x56));
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next(), Some(0x78));
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
     }
 }
