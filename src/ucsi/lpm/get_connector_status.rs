@@ -5,6 +5,7 @@ use bincode::enc::{Encode, Encoder};
 use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bitfield::bitfield;
 
+use crate::ucsi::ppm::set_notification_enable::NotificationEnable;
 use crate::ucsi::{CommandHeaderRaw, COMMAND_LEN};
 use crate::PowerRole;
 
@@ -23,8 +24,6 @@ bitfield! {
     pub bool, external_supply_change, set_external_supply_change: 1;
     /// Power operation mode change
     pub bool, power_op_mode_change, set_power_op_mode_change: 2;
-    /// Attention received from port partner
-    pub bool, attention, set_attention: 3;
     /// Provider capabilities change
     pub bool, provider_caps_change, set_provider_caps_change: 5;
     /// Negotiated power level change
@@ -39,8 +38,6 @@ bitfield! {
     pub bool, connector_partner_changed, set_connector_partner_changed: 11;
     /// Power direction changed
     pub bool, power_direction_changed, set_power_direction_changed: 12;
-    /// Sink path status change
-    pub bool, sink_path_status_change, set_sink_path_status_change: 13;
     /// Connect/disconnect
     pub bool, connect_change, set_connect_change: 14;
     /// Error
@@ -71,16 +68,6 @@ impl ConnectorStatusChange {
     /// Sets the power operation mode change flag
     pub fn set_power_op_mode_change(&mut self, value: bool) {
         self.0.set_power_op_mode_change(value);
-    }
-
-    /// Returns the attention flag
-    pub fn attention(&self) -> bool {
-        self.0.attention()
-    }
-
-    /// Sets the attention flag
-    pub fn set_attention(&mut self, value: bool) {
-        self.0.set_attention(value);
     }
 
     /// Returns the provider capabilities change flag
@@ -153,16 +140,6 @@ impl ConnectorStatusChange {
         self.0.set_power_direction_changed(value);
     }
 
-    /// Returns the sink path status change flag
-    pub fn sink_path_status_change(&self) -> bool {
-        self.0.sink_path_status_change()
-    }
-
-    /// Sets the sink path status change flag
-    pub fn set_sink_path_status_change(&mut self, value: bool) {
-        self.0.set_sink_path_status_change(value);
-    }
-
     /// Returns the connect/disconnect change flag
     pub fn connect_change(&self) -> bool {
         self.0.connect_change()
@@ -181,6 +158,19 @@ impl ConnectorStatusChange {
     /// Sets the error flag
     pub fn set_error(&mut self, value: bool) {
         self.0.set_error(value);
+    }
+
+    /// Returns true if no status change flags are set
+    pub fn is_none(&self) -> bool {
+        self.0 .0 == 0
+    }
+
+    /// Returns a new connector status change with all flags that match the given notification enable flags
+    pub fn filter_enabled(&self, enable: NotificationEnable) -> Self {
+        // These bitfields have the same layout
+        let connector_raw = self.0 .0;
+        let enable_raw: u16 = enable.into();
+        ConnectorStatusChange(ConnectorStatusChangeRaw(connector_raw & enable_raw))
     }
 }
 

@@ -9,7 +9,7 @@ bitfield! {
     /// Argument for SET_NOTIFICATION_ENABLE see USCI spec 6.5.5
     #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub(super) struct NotificationEnableRaw(u32);
+    pub(super) struct NotificationEnableRaw(u16);
     impl Debug;
 
     /// Notify on command complete
@@ -18,10 +18,6 @@ bitfield! {
     pub bool, external_supply_change, set_external_supply_change: 1;
     /// Notify on power operation mode change
     pub bool, power_op_mode_change, set_power_op_mode_change: 2;
-    /// Notify on attention
-    pub bool, attention, set_attention: 3;
-    /// Notify on firmware update request
-    pub bool, fw_update_req, set_fw_update_req: 4;
     /// Notify on provider capabilities change
     pub bool, provider_caps_change, set_provider_caps_change: 5;
     /// Notify on power level change
@@ -32,20 +28,14 @@ bitfield! {
     pub bool, cam_change, set_cam_change: 8;
     /// Notify on battery charge change
     pub bool, battery_charge_change, set_battery_charge_change: 9;
-    /// Notify on security request
-    pub bool, security_req, set_security_req: 10;
     /// Notify on connector partner change
     pub bool, connector_partner_change, set_connector_partner_change: 11;
     /// Notify on power direction change
     pub bool, power_dir_change, set_power_dir_change: 12;
-    /// Notify on retimer mode change
-    pub bool, set_retimer_mode, set_set_retimer_mode: 13;
     /// Notify on connect change
     pub bool, connect_change, set_connect_change: 14;
     /// Notify on error
     pub bool, error, set_error: 15;
-    /// Notify on sink path change
-    pub bool, sink_path_change, set_sink_path_change: 16;
 }
 
 /// Higher-level wrapper around [`SetNotificationEnableRaw`]
@@ -84,28 +74,6 @@ impl NotificationEnable {
     /// Set power operation mode change notification status
     pub fn set_power_op_mode_change(&mut self, val: bool) -> &mut Self {
         self.0.set_power_op_mode_change(val);
-        self
-    }
-
-    /// Returns attention notification status
-    pub fn attention(&self) -> bool {
-        self.0.attention()
-    }
-
-    /// Set attention notification status
-    pub fn set_attention(&mut self, val: bool) -> &mut Self {
-        self.0.set_attention(val);
-        self
-    }
-
-    /// Returns firmware update request notification status
-    pub fn fw_update_req(&self) -> bool {
-        self.0.fw_update_req()
-    }
-
-    /// Set firmware update request notification status
-    pub fn set_fw_update_req(&mut self, val: bool) -> &mut Self {
-        self.0.set_fw_update_req(val);
         self
     }
 
@@ -164,17 +132,6 @@ impl NotificationEnable {
         self
     }
 
-    /// Returns security request notification status
-    pub fn security_req(&self) -> bool {
-        self.0.security_req()
-    }
-
-    /// Set security request notification status
-    pub fn set_security_req(&mut self, val: bool) -> &mut Self {
-        self.0.set_security_req(val);
-        self
-    }
-
     /// Returns connector partner change notification status
     pub fn connector_partner_change(&self) -> bool {
         self.0.connector_partner_change()
@@ -194,17 +151,6 @@ impl NotificationEnable {
     /// Set power direction change notification status
     pub fn set_power_dir_change(&mut self, val: bool) -> &mut Self {
         self.0.set_power_dir_change(val);
-        self
-    }
-
-    /// Returns retimer mode change notification status
-    pub fn set_retimer_mode(&self) -> bool {
-        self.0.set_retimer_mode()
-    }
-
-    /// Set retimer mode change notification status
-    pub fn set_set_retimer_mode(&mut self, val: bool) -> &mut Self {
-        self.0.set_set_retimer_mode(val);
         self
     }
 
@@ -230,17 +176,6 @@ impl NotificationEnable {
         self
     }
 
-    /// Returns sink path change notification status
-    pub fn sink_path_change(&self) -> bool {
-        self.0.sink_path_change()
-    }
-
-    /// Set sink path change notification status
-    pub fn set_sink_path_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_sink_path_change(val);
-        self
-    }
-
     /// Returns true if no notification is enabled
     pub fn is_empty(&self) -> bool {
         self.0 .0 == 0
@@ -257,13 +192,13 @@ impl NotificationEnable {
     }
 }
 
-impl From<u32> for NotificationEnable {
-    fn from(raw: u32) -> Self {
+impl From<u16> for NotificationEnable {
+    fn from(raw: u16) -> Self {
         NotificationEnable(NotificationEnableRaw(raw))
     }
 }
 
-impl From<NotificationEnable> for u32 {
+impl From<NotificationEnable> for u16 {
     fn from(enable: NotificationEnable) -> Self {
         enable.0 .0
     }
@@ -283,7 +218,7 @@ impl Encode for NotificationEnable {
 
 impl<Context> Decode<Context> for NotificationEnable {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u32::decode(decoder)?;
+        let raw = u16::decode(decoder)?;
         Ok(NotificationEnable::from(raw))
     }
 }
