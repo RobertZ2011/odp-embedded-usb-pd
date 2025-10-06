@@ -147,6 +147,10 @@ pub trait Common: Copy + Clone + PartialEq + Eq + Into<Pdo> + Into<u32> {
     fn dual_role_power(&self) -> bool;
     /// Return true if the PDO has unconstrained power
     fn unconstrained_power(&self) -> bool;
+    /// Max voltage in mV
+    fn max_voltage_mv(&self) -> u16;
+    /// Min voltage in mV
+    fn min_voltage_mv(&self) -> u16;
 }
 
 /// This trait is for PDO values that have a definite power role. The power role of a PDO
@@ -189,6 +193,20 @@ impl Common for Pdo {
             Pdo::Sink(pdo) => pdo.unconstrained_power(),
         }
     }
+
+    fn max_voltage_mv(&self) -> u16 {
+        match self {
+            Pdo::Source(pdo) => pdo.max_voltage_mv(),
+            Pdo::Sink(pdo) => pdo.max_voltage_mv(),
+        }
+    }
+
+    fn min_voltage_mv(&self) -> u16 {
+        match self {
+            Pdo::Source(pdo) => pdo.min_voltage_mv(),
+            Pdo::Sink(pdo) => pdo.min_voltage_mv(),
+        }
+    }
 }
 
 impl From<Pdo> for u32 {
@@ -215,5 +233,51 @@ pub struct ExpectedPdo {
 impl From<ExpectedPdo> for PdError {
     fn from(_: ExpectedPdo) -> Self {
         PdError::InvalidParams
+    }
+}
+
+/// Full PD contract containing PDO and RDO
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Contract {
+    pub pdo: Pdo,
+    pub rdo: Rdo,
+}
+
+impl Contract {
+    /// Create a new contract from a PDO and RDO
+    pub fn new(pdo: Pdo, rdo: Rdo) -> Self {
+        Contract { pdo, rdo }
+    }
+
+    /// Create a new contract from a sink PDO and RDO
+    pub fn from_sink(pdo: sink::Pdo, rdo: Rdo) -> Self {
+        Contract {
+            pdo: Pdo::Sink(pdo),
+            rdo,
+        }
+    }
+
+    /// Create a new contract from a source PDO and RDO
+    pub fn from_source(pdo: source::Pdo, rdo: Rdo) -> Self {
+        Contract {
+            pdo: Pdo::Source(pdo),
+            rdo,
+        }
+    }
+
+    /// Returns the operating current in mA, uses maximum voltage for battery PDO calculation
+    /// Returns None on an attempted division by zero
+    pub fn operating_current_ma(&self) -> Option<u16> {
+        match self.rdo {
+            Rdo::Fixed(data) => Some(data.max_operating_current_ma),
+            Rdo::Battery(data) => data
+                .max_operating_power_mw
+                .checked_div(self.pdo.max_voltage_mv() as u32)
+                .map(|v| v as u16),
+            Rdo::Variable(data) => Some(data.max_operating_current_ma),
+            Rdo::Avs(data) => Some(data.operating_current_ma),
+            Rdo::Pps(data) => Some(data.operating_current_ma),
+        }
     }
 }

@@ -57,6 +57,46 @@ impl Common for Pdo {
             _ => false,
         }
     }
+
+    fn max_voltage_mv(&self) -> u16 {
+        match self {
+            Pdo::Fixed(data) => data.voltage_mv,
+            Pdo::Battery(data) => data.max_voltage_mv,
+            Pdo::Variable(data) => data.max_voltage_mv,
+            Pdo::Augmented(apdo) => match apdo {
+                Apdo::SprPps(data) => data.max_voltage_mv,
+                Apdo::EprAvs(data) => data.max_voltage_mv,
+                // 20V maximum only if 15-20V range is supported
+                Apdo::SprAvs(data) => {
+                    if data.max_current_20v_ma > 0 {
+                        20000
+                    } else {
+                        15000
+                    }
+                }
+            },
+        }
+    }
+
+    fn min_voltage_mv(&self) -> u16 {
+        match self {
+            Pdo::Fixed(data) => data.voltage_mv,
+            Pdo::Battery(data) => data.min_voltage_mv,
+            Pdo::Variable(data) => data.min_voltage_mv,
+            Pdo::Augmented(apdo) => match apdo {
+                Apdo::SprPps(data) => data.min_voltage_mv,
+                Apdo::EprAvs(data) => data.min_voltage_mv,
+                // 15V minimum only if 15-20V range is supported
+                Apdo::SprAvs(data) => {
+                    if data.max_current_20v_ma > 0 {
+                        15000
+                    } else {
+                        9000
+                    }
+                }
+            },
+        }
+    }
 }
 
 impl From<Pdo> for super::Pdo {
