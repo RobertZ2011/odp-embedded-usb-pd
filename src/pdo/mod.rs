@@ -147,6 +147,10 @@ pub trait Common: Copy + Clone + PartialEq + Eq + Into<Pdo> + Into<u32> {
     fn dual_role_power(&self) -> bool;
     /// Return true if the PDO has unconstrained power
     fn unconstrained_power(&self) -> bool;
+    /// Max voltage in mV
+    fn max_voltage_mv(&self) -> u16;
+    /// Min voltage in mV
+    fn min_voltage_mv(&self) -> u16;
 }
 
 /// This trait is for PDO values that have a definite power role. The power role of a PDO
@@ -189,6 +193,20 @@ impl Common for Pdo {
             Pdo::Sink(pdo) => pdo.unconstrained_power(),
         }
     }
+
+    fn max_voltage_mv(&self) -> u16 {
+        match self {
+            Pdo::Source(pdo) => pdo.max_voltage_mv(),
+            Pdo::Sink(pdo) => pdo.max_voltage_mv(),
+        }
+    }
+
+    fn min_voltage_mv(&self) -> u16 {
+        match self {
+            Pdo::Source(pdo) => pdo.min_voltage_mv(),
+            Pdo::Sink(pdo) => pdo.min_voltage_mv(),
+        }
+    }
 }
 
 impl From<Pdo> for u32 {
@@ -215,5 +233,200 @@ pub struct ExpectedPdo {
 impl From<ExpectedPdo> for PdError {
     fn from(_: ExpectedPdo) -> Self {
         PdError::InvalidParams
+    }
+}
+
+/// Full PD contract containing PDO and RDO
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Contract {
+    pub pdo: Pdo,
+    pub rdo: Rdo,
+}
+
+impl Contract {
+    /// Create a new contract from a PDO and RDO
+    pub fn new(pdo: Pdo, rdo: Rdo) -> Self {
+        Contract { pdo, rdo }
+    }
+
+    /// Create a new contract from a sink PDO and RDO
+    pub fn from_sink(pdo: sink::Pdo, rdo: Rdo) -> Self {
+        Contract {
+            pdo: Pdo::Sink(pdo),
+            rdo,
+        }
+    }
+
+    /// Create a new contract from a source PDO and RDO
+    pub fn from_source(pdo: source::Pdo, rdo: Rdo) -> Self {
+        Contract {
+            pdo: Pdo::Source(pdo),
+            rdo,
+        }
+    }
+
+    /// Returns the operating current in mA, uses maximum voltage for battery PDO calculation
+    /// Returns None on an attempted division by zero
+    pub fn operating_current_ma(&self) -> Option<u16> {
+        match self.rdo {
+            Rdo::Fixed(data) => Some(data.operating_current_ma),
+            Rdo::Battery(data) => data
+                .operating_power_mw
+                .checked_div(self.pdo.max_voltage_mv() as u32)
+                .map(|v| (1000 * v) as u16),
+            Rdo::Variable(data) => Some(data.operating_current_ma),
+            Rdo::Avs(data) => Some(data.operating_current_ma),
+            Rdo::Pps(data) => Some(data.operating_current_ma),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::pdo::sink::{BatteryData, EprAvsData, FixedData, SprPpsData};
+
+    #[test]
+    fn test_contract_operating_current_ma_fixed() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Fixed(FixedData {
+                operational_current_ma: 3000,
+                voltage_mv: 5000,
+                dual_role_power: false,
+                higher_capability: false,
+                unconstrained_power: false,
+                usb_comms_capable: false,
+                dual_role_data: false,
+                frs_required_current: sink::FrsRequiredCurrent::Current1A5,
+            }),
+            Rdo::Fixed(rdo::FixedVarData {
+                operating_current_ma: 1500,
+                max_operating_current_ma: 2000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), Some(1500));
+    }
+
+    #[test]
+    fn test_contract_operating_current_ma_battery() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Battery(BatteryData {
+                max_voltage_mv: 20000,
+                min_voltage_mv: 15000,
+                operational_power_mw: 60000,
+            }),
+            Rdo::Battery(rdo::BatteryData {
+                operating_power_mw: 40000,
+                max_operating_power_mw: 45000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), Some(2000));
+    }
+
+    #[test]
+    fn test_contract_operating_current_ma_battery_fail() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Battery(BatteryData {
+                max_voltage_mv: 0,
+                min_voltage_mv: 15000,
+                operational_power_mw: 60000,
+            }),
+            Rdo::Battery(rdo::BatteryData {
+                operating_power_mw: 40000,
+                max_operating_power_mw: 45000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), None);
+    }
+
+    #[test]
+    fn test_contract_operating_current_ma_variable() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Variable(sink::VariableData {
+                operational_current_ma: 3000,
+                max_voltage_mv: 20000,
+                min_voltage_mv: 15000,
+            }),
+            Rdo::Variable(rdo::FixedVarData {
+                operating_current_ma: 2000,
+                max_operating_current_ma: 2500,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), Some(2000));
+    }
+
+    #[test]
+    fn test_contract_operating_current_ma_avs() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Augmented(sink::Apdo::EprAvs(EprAvsData {
+                max_voltage_mv: 21000,
+                min_voltage_mv: 15000,
+                pdp_mw: 3000,
+            })),
+            Rdo::Avs(rdo::AvsData {
+                operating_current_ma: 2500,
+                output_voltage_mv: 20000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), Some(2500));
+    }
+
+    #[test]
+    fn test_contract_operating_current_ma_pps() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Augmented(sink::Apdo::SprPps(SprPpsData {
+                max_voltage_mv: 21000,
+                min_voltage_mv: 15000,
+                max_current_ma: 3000,
+            })),
+            Rdo::Pps(rdo::PpsData {
+                operating_current_ma: 2500,
+                output_voltage_mv: 20000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), Some(2500));
     }
 }
