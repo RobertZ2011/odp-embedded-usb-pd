@@ -6,7 +6,6 @@ stateDiagram-v2
     Busy_true: Busy(true)
     ProcessingCommand: ProcessingCommand
     WaitForCommandCompleteAck: WaitForCommandCompleteAck
-    WaitForAsyncEventAck: WaitForAsyncEventAck
 
     Idle_false --> ProcessingCommand: SetNotificationEnable [ExecuteCommand]
     Idle_false --> Busy_false: BusyChanged
@@ -17,7 +16,6 @@ stateDiagram-v2
     Busy_false --> Idle_false: PpmReset [ResetComplete]
 
     Idle_true --> Busy_true: BusyChanged
-    Idle_true --> WaitForAsyncEventAck: PendingAsyncEvent [OpmNotifyAsyncEvent]
     Idle_true --> ProcessingCommand: Command [ExecuteCommand]
     Idle_true --> Idle_false: PpmReset [ResetComplete]
 
@@ -30,8 +28,5 @@ stateDiagram-v2
     ProcessingCommand --> WaitForCommandCompleteAck: Cancel [OpmNotifyCommandComplete]
     ProcessingCommand --> Idle_false: PpmReset [ResetComplete]
 
-    WaitForCommandCompleteAck --> Idle_true: AckCcCi [OpmNotifyAckComplete]
+    WaitForCommandCompleteAck --> Idle_true: AckCcCi [AckComplete]
     WaitForCommandCompleteAck --> Idle_false: PpmReset [ResetComplete]
-
-    WaitForAsyncEventAck --> Idle_true: AckCcCi
-    WaitForAsyncEventAck --> Idle_false: PpmReset [ResetComplete]

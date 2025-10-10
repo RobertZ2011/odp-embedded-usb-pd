@@ -6,6 +6,7 @@
 //! is left to the implementation. The state machine presented here abstracts over these actions with the [`Input`] enum.
 //! The [`Output`] enum defines the notifications to the OPM.
 
+use crate::ucsi::ppm::ack_cc_ci;
 use crate::{ucsi, GlobalPortId, LocalPortId, PortId};
 
 /// PPM states
@@ -24,8 +25,6 @@ pub enum State {
     ProcessingCommand,
     /// Waiting for command complete ack
     WaitForCommandCompleteAck,
-    /// Waiting for async event ack
-    WaitForAsyncEventAck,
 }
 
 /// Inputs to the PPM state machine
@@ -38,8 +37,6 @@ pub enum Input<'a, T: PortId> {
     CommandComplete,
     /// External busy status changed
     BusyChanged,
-    /// There's a pending async event
-    PendingAsyncEvent,
 }
 
 pub type GlobalInput<'a> = Input<'a, GlobalPortId>;
@@ -53,10 +50,8 @@ pub enum Output<'a, T: PortId> {
     ExecuteCommand(&'a ucsi::Command<T>),
     /// Notify OPM that command completed
     OpmNotifyCommandComplete,
-    /// Notify that ack was received
-    OpmNotifyAckComplete,
-    /// Notify OPM of async event
-    OpmNotifyAsyncEvent,
+    /// Ack completed
+    AckComplete(ack_cc_ci::Ack),
     /// PPM reset complete
     ResetComplete,
     /// Notify OPM that PPM is busy
@@ -120,7 +115,6 @@ impl<T: PortId> StateMachine<T> {
 
             // Idle(true) transitions
             (Idle(true), BusyChanged) => (Busy(true), None),
-            (Idle(true), PendingAsyncEvent) => (WaitForAsyncEventAck, Some(OpmNotifyAsyncEvent)),
             (Idle(true), Command(cmd)) => (ProcessingCommand, Some(ExecuteCommand(cmd))),
 
             // ProcessingCommand transitions
@@ -131,19 +125,7 @@ impl<T: PortId> StateMachine<T> {
             // WaitForCommandCompleteAck transitions
             (WaitForCommandCompleteAck, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args)))) => {
                 if args.ack.command_complete() {
-                    (Idle(true), Some(OpmNotifyAckComplete))
-                } else {
-                    return Err(InvalidTransition {
-                        state: self.state,
-                        input,
-                    });
-                }
-            }
-
-            // WaitForAsyncEventAck transitions
-            (WaitForAsyncEventAck, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args)))) => {
-                if args.ack.connector_change() {
-                    (Idle(true), None)
+                    (Idle(true), Some(AckComplete(args.ack)))
                 } else {
                     return Err(InvalidTransition {
                         state: self.state,
