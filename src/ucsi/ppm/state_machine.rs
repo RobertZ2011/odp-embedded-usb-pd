@@ -62,7 +62,7 @@ pub type GlobalOutput<'a> = Output<'a, GlobalPortId>;
 pub type LocalOutput<'a> = Output<'a, LocalPortId>;
 
 /// Attempted transition that is not allowed by the state machine
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InvalidTransition<'a, T: PortId> {
     /// The current state of the state machine
@@ -102,6 +102,9 @@ impl<T: PortId> StateMachine<T> {
         use State::*;
 
         let (next_state, output) = match (self.state, input) {
+            // Reset transitions
+            (_, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::PpmReset))) => (Idle(false), Some(ResetComplete)),
+
             // Idle(false) transitions
             (Idle(false), Command(cmd @ ucsi::Command::PpmCommand(ucsi::ppm::Command::SetNotificationEnable(_)))) => {
                 (ProcessingCommand, Some(ExecuteCommand(cmd)))
@@ -113,8 +116,19 @@ impl<T: PortId> StateMachine<T> {
             (Busy(false), CommandComplete) => (Busy(false), None),
             (Busy(true), CommandComplete) => (Busy(true), Some(OpmNotifyBusy)),
 
-            // Idle(true) transitions
+            // Idle(true) successful transitions
             (Idle(true), BusyChanged) => (Busy(true), None),
+            (Idle(true), Command(cmd @ ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args)))) => {
+                if args.ack.command_complete() {
+                    // This should only happen in WaitForCommandCompleteAck
+                    return Err(InvalidTransition {
+                        state: self.state,
+                        input,
+                    });
+                } else {
+                    (ProcessingCommand, Some(ExecuteCommand(cmd)))
+                }
+            }
             (Idle(true), Command(cmd)) => (ProcessingCommand, Some(ExecuteCommand(cmd))),
 
             // ProcessingCommand transitions
@@ -133,9 +147,6 @@ impl<T: PortId> StateMachine<T> {
                     });
                 }
             }
-
-            // Reset transitions
-            (_, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::PpmReset))) => (Idle(false), Some(ResetComplete)),
 
             // Invalid transition
             _ => {
@@ -159,3 +170,205 @@ impl<T: PortId> Default for StateMachine<T> {
 
 pub type GlobalStateMachine = StateMachine<GlobalPortId>;
 pub type LocalStateMachine = StateMachine<LocalPortId>;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::ucsi::{lpm, ppm, Command};
+
+    #[test]
+    fn test_reset_all() {
+        let mut sm = GlobalStateMachine::new();
+
+        // Test reset from all states
+        sm.state = State::Idle(false);
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::PpmReset)));
+        assert_eq!(res, Ok(Some(Output::ResetComplete)));
+        assert_eq!(sm.state(), State::Idle(false));
+
+        // Test reset from Idle(true)
+        sm.state = State::Idle(true);
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::PpmReset)));
+        assert_eq!(res, Ok(Some(Output::ResetComplete)));
+        assert_eq!(sm.state(), State::Idle(false));
+
+        // Test reset from Busy(false)
+        sm.state = State::Busy(false);
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::PpmReset)));
+        assert_eq!(res, Ok(Some(Output::ResetComplete)));
+        assert_eq!(sm.state(), State::Idle(false));
+
+        // Test reset from Busy(true)
+        sm.state = State::Busy(true);
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::PpmReset)));
+        assert_eq!(res, Ok(Some(Output::ResetComplete)));
+        assert_eq!(sm.state(), State::Idle(false));
+
+        // Test reset from ProcessingCommand
+        sm.state = State::ProcessingCommand;
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::PpmReset)));
+        assert_eq!(res, Ok(Some(Output::ResetComplete)));
+        assert_eq!(sm.state(), State::Idle(false));
+
+        // Test reset from WaitForCommandCompleteAck
+        sm.state = State::WaitForCommandCompleteAck;
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::PpmReset)));
+        assert_eq!(res, Ok(Some(Output::ResetComplete)));
+        assert_eq!(sm.state(), State::Idle(false));
+    }
+
+    /// Test that only SET_NOTIFICATION_ENABLE works from Idle(false)
+    #[test]
+    fn test_idle_false_commands() {
+        let mut sm = GlobalStateMachine::new();
+        sm.state = State::Idle(false);
+
+        // Valid command
+        let cmd = Command::PpmCommand(ppm::Command::SetNotificationEnable(
+            ucsi::ppm::set_notification_enable::Args::default(),
+        ));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(res, Ok(Some(Output::ExecuteCommand(&cmd))));
+        assert_eq!(sm.state(), State::ProcessingCommand);
+
+        // Invalid PPM command
+        sm.state = State::Idle(false);
+        let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ucsi::ppm::ack_cc_ci::Args::default()));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(
+            res,
+            Err(InvalidTransition {
+                state: State::Idle(false),
+                input: Input::Command(&cmd)
+            })
+        );
+        assert_eq!(sm.state(), State::Idle(false));
+
+        // Invalid LPM command
+        sm.state = State::Idle(false);
+        let cmd = Command::LpmCommand(ucsi::lpm::Command::new(
+            GlobalPortId(0),
+            lpm::CommandData::GetPdos(lpm::get_pdos::Args::default()),
+        ));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(
+            res,
+            Err(InvalidTransition {
+                state: State::Idle(false),
+                input: Input::Command(&cmd)
+            })
+        );
+        assert_eq!(sm.state(), State::Idle(false));
+    }
+
+    /// Test that cancel works while processing a command, but no other commands are accepted
+    #[test]
+    fn test_processing_commands() {
+        let mut sm = GlobalStateMachine::new();
+        sm.state = State::ProcessingCommand;
+
+        // State machine is already in processing command state, should fail
+        let cmd = Command::LpmCommand(lpm::Command::new(
+            GlobalPortId(0),
+            lpm::CommandData::GetPdos(lpm::get_pdos::Args::default()),
+        ));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(
+            res,
+            Err(InvalidTransition {
+                state: State::ProcessingCommand,
+                input: Input::Command(&cmd)
+            })
+        );
+        assert_eq!(sm.state(), State::ProcessingCommand);
+
+        let res = sm.consume(Input::Command(&Command::PpmCommand(ppm::Command::Cancel)));
+        assert_eq!(res, Ok(Some(Output::OpmNotifyCommandComplete)));
+        assert_eq!(sm.state(), State::WaitForCommandCompleteAck)
+    }
+
+    /// Test idle true command transitions
+    #[test]
+    fn test_idle_true_commands() {
+        let mut sm = GlobalStateMachine::new();
+        sm.state = State::Idle(true);
+
+        // Test simple command execution
+        let cmd = Command::LpmCommand(lpm::Command::new(
+            GlobalPortId(0),
+            lpm::CommandData::GetPdos(lpm::get_pdos::Args::default()),
+        ));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(res, Ok(Some(Output::ExecuteCommand(&cmd))));
+        assert_eq!(sm.state(), State::ProcessingCommand);
+
+        // Test rejection of command completion ACK
+        sm.state = State::Idle(true);
+        let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
+            ack: *ppm::ack_cc_ci::Ack::default().set_command_complete(true),
+        }));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(
+            res,
+            Err(InvalidTransition {
+                state: State::Idle(true),
+                input: Input::Command(&cmd)
+            })
+        );
+        assert_eq!(sm.state(), State::Idle(true));
+
+        // Test acceptance of connector change ACK
+        sm.state = State::Idle(true);
+        let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
+            ack: *ppm::ack_cc_ci::Ack::default().set_connector_change(true),
+        }));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(res, Ok(Some(Output::ExecuteCommand(&cmd))));
+        assert_eq!(sm.state(), State::ProcessingCommand);
+    }
+
+    /// Test wait for command complete command transitions
+    #[test]
+    fn test_wait_for_command_complete_ack_commands() {
+        let mut sm = GlobalStateMachine::new();
+        sm.state = State::WaitForCommandCompleteAck;
+
+        // Command complete ACK should succeed
+        let ack = *ppm::ack_cc_ci::Ack::default().set_command_complete(true);
+        let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args { ack }));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(res, Ok(Some(Output::AckComplete(ack))));
+        assert_eq!(sm.state(), State::Idle(true));
+
+        // Connector change ACK only should fail
+        sm.state = State::WaitForCommandCompleteAck;
+        let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
+            ack: *ppm::ack_cc_ci::Ack::default().set_connector_change(true),
+        }));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(
+            res,
+            Err(InvalidTransition {
+                state: State::WaitForCommandCompleteAck,
+                input: Input::Command(&cmd)
+            })
+        );
+        assert_eq!(sm.state(), State::WaitForCommandCompleteAck);
+
+        // All other commands should fail as well
+        sm.state = State::WaitForCommandCompleteAck;
+        let cmd = Command::LpmCommand(lpm::Command::new(
+            GlobalPortId(0),
+            lpm::CommandData::GetPdos(lpm::get_pdos::Args::default()),
+        ));
+        let res = sm.consume(Input::Command(&cmd));
+        assert_eq!(
+            res,
+            Err(InvalidTransition {
+                state: State::WaitForCommandCompleteAck,
+                input: Input::Command(&cmd)
+            })
+        );
+        assert_eq!(sm.state(), State::WaitForCommandCompleteAck);
+    }
+}
