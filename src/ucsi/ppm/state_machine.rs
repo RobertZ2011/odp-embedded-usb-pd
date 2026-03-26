@@ -137,15 +137,10 @@ impl<T: PortId> StateMachine<T> {
             }
 
             // WaitForCommandCompleteAck transitions
-            (WaitForCommandCompleteAck, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args)))) => {
-                if args.ack.command_complete() {
-                    (Idle(true), Some(AckComplete(args.ack)))
-                } else {
-                    return Err(InvalidTransition {
-                        state: self.state,
-                        input,
-                    });
-                }
+            (WaitForCommandCompleteAck, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args))))
+                if args.ack.command_complete() =>
+            {
+                (Idle(true), Some(AckComplete(args.ack)))
             }
 
             // Invalid transition
