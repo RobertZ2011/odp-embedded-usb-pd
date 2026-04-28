@@ -1,3 +1,9 @@
+//! Vendor Defined Messages (VDM) allow vendors to exchange information outside of that defined by the PD spec.
+//!
+//! See PD spect 6.4.4 Vendor Defined Message.
+
+pub mod structured;
+
 pub const DATA_OBJ_SIZE: usize = 4;
 pub const MAX_VDOS: usize = 6;
 pub const MAX_NUM_DATA_OBJECTS: usize = 7;
@@ -24,11 +30,6 @@ pub enum Cmd {
     /// Custom vendor SVID Commands start here
     SvidCmdStart = 16,
 }
-
-/// Standard or Vendor ID (SVID) newtype, see PD spec 6.4.4.2.1
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Svid(pub u16);
 
 /// Altmode ID newtype for discover modes command and others, see PD spec 6.4.4.3.3
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
