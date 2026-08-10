@@ -75,7 +75,7 @@ bitfield! {
 }
 
 /// Fixed and variable RDO data
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FixedVarData {
     /// Object position
@@ -152,7 +152,7 @@ bitfield! {
 }
 
 /// Battery RDO data
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryData {
     /// Object position
@@ -229,7 +229,7 @@ bitfield! {
 }
 
 /// PPS RDO data
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PpsData {
     /// Object position
@@ -306,7 +306,7 @@ bitfield! {
 }
 
 /// AVS RDO data
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AvsData {
     /// Object position

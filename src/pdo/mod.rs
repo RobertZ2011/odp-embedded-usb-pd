@@ -4,7 +4,7 @@
 //! a type-safe version.
 use crate::PdError;
 
-mod rdo;
+pub mod rdo;
 pub mod sink;
 pub mod source;
 
