@@ -44,7 +44,10 @@ impl Encode for Command {
                     bytemuck::must_cast(ppm_reset::ArgsRaw::from(ppm_reset::Args));
                 bytes.encode(encoder)
             }
-            Command::Cancel => cancel::Args.encode(encoder),
+            Command::Cancel => {
+                let bytes: [u8; cancel::ArgsRaw::LEN] = bytemuck::must_cast(cancel::ArgsRaw::from(cancel::Args));
+                bytes.encode(encoder)
+            }
             Command::AckCcCi(args) => args.encode(encoder),
             Command::SetNotificationEnable(args) => args.encode(encoder),
             Command::GetCapability => get_capability::Args.encode(encoder),
@@ -62,7 +65,7 @@ impl Decode<CommandHeader> for Command {
             }
             CommandType::Cancel => {
                 // Don't actually have args, but we need to consume the bytes
-                let _args = cancel::Args::decode(decoder)?;
+                let _bytes: [u8; cancel::ArgsRaw::LEN] = Decode::decode(decoder)?;
                 Ok(Command::Cancel)
             }
             CommandType::AckCcCi => Ok(Command::AckCcCi(ack_cc_ci::Args::decode(decoder)?)),
