@@ -8,12 +8,14 @@ defmt = { version = "0.3", optional = true }
 embedded-hal-async = "1.0.0"
 bitfield = "0.19.0"
 bincode = { version = "2.0.1", default-features = false }
+bytemuck = { version = "1.25.2", optional = true, features = ["derive", "must_cast"] }
+pack1 = { version = "1.1.0", optional = true, features = ["bytemuck"] }
 
 [features]
 default = []
 defmt = ["dep:defmt"]
 # Enable UCSI v1.2 data structures
-ucsi-v1_2 = []
+ucsi-v1_2 = ["dep:bytemuck", "dep:pack1"]
 
 [lints.clippy]
 correctness = "deny"

@@ -39,7 +39,11 @@ impl Command {
 impl Encode for Command {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         match self {
-            Command::PpmReset => ppm_reset::Args.encode(encoder),
+            Command::PpmReset => {
+                let bytes: [u8; ppm_reset::ArgsRaw::LEN] =
+                    bytemuck::must_cast(ppm_reset::ArgsRaw::from(ppm_reset::Args));
+                bytes.encode(encoder)
+            }
             Command::Cancel => cancel::Args.encode(encoder),
             Command::AckCcCi(args) => args.encode(encoder),
             Command::SetNotificationEnable(args) => args.encode(encoder),
@@ -53,7 +57,7 @@ impl Decode<CommandHeader> for Command {
         match decoder.context().command() {
             CommandType::PpmReset => {
                 // Don't actually have args, but we need to consume the bytes
-                let _args = ppm_reset::Args::decode(decoder)?;
+                let _bytes: [u8; ppm_reset::ArgsRaw::LEN] = Decode::decode(decoder)?;
                 Ok(Command::PpmReset)
             }
             CommandType::Cancel => {
