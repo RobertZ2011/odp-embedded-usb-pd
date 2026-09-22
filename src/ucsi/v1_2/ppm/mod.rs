@@ -48,7 +48,10 @@ impl Encode for Command {
                 let bytes: [u8; cancel::ArgsRaw::LEN] = bytemuck::must_cast(cancel::ArgsRaw::from(cancel::Args));
                 bytes.encode(encoder)
             }
-            Command::AckCcCi(args) => args.encode(encoder),
+            Command::AckCcCi(args) => {
+                let bytes: [u8; ack_cc_ci::ArgsRaw::LEN] = bytemuck::must_cast(ack_cc_ci::ArgsRaw::from(*args));
+                bytes.encode(encoder)
+            }
             Command::SetNotificationEnable(args) => args.encode(encoder),
             Command::GetCapability => get_capability::Args.encode(encoder),
         }
@@ -68,7 +71,12 @@ impl Decode<CommandHeader> for Command {
                 let _bytes: [u8; cancel::ArgsRaw::LEN] = Decode::decode(decoder)?;
                 Ok(Command::Cancel)
             }
-            CommandType::AckCcCi => Ok(Command::AckCcCi(ack_cc_ci::Args::decode(decoder)?)),
+            CommandType::AckCcCi => {
+                let bytes: [u8; ack_cc_ci::ArgsRaw::LEN] = Decode::decode(decoder)?;
+                Ok(Command::AckCcCi(
+                    bytemuck::must_cast::<_, ack_cc_ci::ArgsRaw>(bytes).into(),
+                ))
+            }
             CommandType::SetNotificationEnable => Ok(Command::SetNotificationEnable(
                 set_notification_enable::Args::decode(decoder)?,
             )),
