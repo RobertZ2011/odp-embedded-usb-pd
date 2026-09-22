@@ -57,7 +57,11 @@ impl Encode for Command {
                     bytemuck::must_cast(set_notification_enable::ArgsRaw::from(*args));
                 bytes.encode(encoder)
             }
-            Command::GetCapability => get_capability::Args.encode(encoder),
+            Command::GetCapability => {
+                let bytes: [u8; get_capability::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_capability::ArgsRaw::from(get_capability::Args));
+                bytes.encode(encoder)
+            }
         }
     }
 }
@@ -89,7 +93,7 @@ impl Decode<CommandHeader> for Command {
             }
             CommandType::GetCapability => {
                 // Don't actually have args, but we need to consume the bytes
-                let _args = get_capability::Args::decode(decoder)?;
+                let _bytes: [u8; get_capability::ArgsRaw::LEN] = Decode::decode(decoder)?;
                 Ok(Command::GetCapability)
             }
             command_type => Err(DecodeError::UnexpectedVariant {
@@ -124,7 +128,11 @@ pub enum ResponseData {
 impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         match self {
-            ResponseData::GetCapability(data) => data.encode(encoder),
+            ResponseData::GetCapability(data) => {
+                let bytes: [u8; get_capability::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_capability::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
         }
     }
 }
@@ -132,9 +140,12 @@ impl Encode for ResponseData {
 impl Decode<CommandType> for ResponseData {
     fn decode<D: Decoder<Context = CommandType>>(decoder: &mut D) -> Result<Self, DecodeError> {
         match decoder.context() {
-            CommandType::GetCapability => Ok(ResponseData::GetCapability(get_capability::ResponseData::decode(
-                decoder,
-            )?)),
+            CommandType::GetCapability => {
+                let bytes: [u8; get_capability::ResponseDataRaw::LEN] = Decode::decode(decoder)?;
+                Ok(ResponseData::GetCapability(
+                    bytemuck::must_cast::<_, get_capability::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             _ => Err(DecodeError::UnexpectedVariant {
                 type_name: "CommandType",
                 allowed: &AllowedEnumVariants::Allowed(&[CommandType::GetCapability as u32]),
