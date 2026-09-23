@@ -1,4 +1,4 @@
-use crate::ucsi::v1_2::{cci, CommandHeader, CommandType};
+use crate::ucsi::v1_2::{cci, CommandHeaderRaw, CommandType, InvalidCommandType, COMMAND_LEN};
 use crate::{GlobalPortId, LocalPortId, PortId};
 
 pub mod ack_cc_ci;
@@ -7,10 +7,6 @@ pub mod get_capability;
 pub mod ppm_reset;
 pub mod set_notification_enable;
 pub mod state_machine;
-
-use bincode::de::{Decode, Decoder};
-use bincode::enc::{Encode, Encoder};
-use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 
 /// Commands that only affect the PPM level and don't need to be sent to an LPM
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -24,6 +20,9 @@ pub enum Command {
 }
 
 impl Command {
+    /// Length of a PPM command payload, the command minus its header
+    pub const PAYLOAD_LEN: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>();
+
     /// Returns the command type for this command
     pub const fn command_type(&self) -> CommandType {
         match self {
@@ -34,87 +33,37 @@ impl Command {
             Command::GetCapability => CommandType::GetCapability,
         }
     }
-}
 
-impl Encode for Command {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+    /// Converts this command into its raw payload bytes
+    pub fn to_payload(&self) -> [u8; Self::PAYLOAD_LEN] {
         match self {
-            Command::PpmReset => {
-                let bytes: [u8; ppm_reset::ArgsRaw::LEN] =
-                    bytemuck::must_cast(ppm_reset::ArgsRaw::from(ppm_reset::Args));
-                bytes.encode(encoder)
-            }
-            Command::Cancel => {
-                let bytes: [u8; cancel::ArgsRaw::LEN] = bytemuck::must_cast(cancel::ArgsRaw::from(cancel::Args));
-                bytes.encode(encoder)
-            }
-            Command::AckCcCi(args) => {
-                let bytes: [u8; ack_cc_ci::ArgsRaw::LEN] = bytemuck::must_cast(ack_cc_ci::ArgsRaw::from(*args));
-                bytes.encode(encoder)
-            }
-            Command::SetNotificationEnable(args) => {
-                let bytes: [u8; set_notification_enable::ArgsRaw::LEN] =
-                    bytemuck::must_cast(set_notification_enable::ArgsRaw::from(*args));
-                bytes.encode(encoder)
-            }
-            Command::GetCapability => {
-                let bytes: [u8; get_capability::ArgsRaw::LEN] =
-                    bytemuck::must_cast(get_capability::ArgsRaw::from(get_capability::Args));
-                bytes.encode(encoder)
-            }
+            Command::PpmReset => bytemuck::must_cast(ppm_reset::ArgsRaw::from(ppm_reset::Args)),
+            Command::Cancel => bytemuck::must_cast(cancel::ArgsRaw::from(cancel::Args)),
+            Command::AckCcCi(args) => bytemuck::must_cast(ack_cc_ci::ArgsRaw::from(*args)),
+            Command::SetNotificationEnable(args) => bytemuck::must_cast(set_notification_enable::ArgsRaw::from(*args)),
+            Command::GetCapability => bytemuck::must_cast(get_capability::ArgsRaw::from(get_capability::Args)),
         }
     }
-}
 
-impl Decode<CommandHeader> for Command {
-    fn decode<D: Decoder<Context = CommandHeader>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match decoder.context().command() {
-            CommandType::PpmReset => {
-                // Don't actually have args, but we need to consume the bytes
-                let _bytes: [u8; ppm_reset::ArgsRaw::LEN] = Decode::decode(decoder)?;
-                Ok(Command::PpmReset)
-            }
-            CommandType::Cancel => {
-                // Don't actually have args, but we need to consume the bytes
-                let _bytes: [u8; cancel::ArgsRaw::LEN] = Decode::decode(decoder)?;
-                Ok(Command::Cancel)
-            }
-            CommandType::AckCcCi => {
-                let bytes: [u8; ack_cc_ci::ArgsRaw::LEN] = Decode::decode(decoder)?;
-                Ok(Command::AckCcCi(
-                    bytemuck::must_cast::<_, ack_cc_ci::ArgsRaw>(bytes).into(),
-                ))
-            }
-            CommandType::SetNotificationEnable => {
-                let bytes: [u8; set_notification_enable::ArgsRaw::LEN] = Decode::decode(decoder)?;
-                Ok(Command::SetNotificationEnable(
-                    bytemuck::must_cast::<_, set_notification_enable::ArgsRaw>(bytes).into(),
-                ))
-            }
-            CommandType::GetCapability => {
-                // Don't actually have args, but we need to consume the bytes
-                let _bytes: [u8; get_capability::ArgsRaw::LEN] = Decode::decode(decoder)?;
-                Ok(Command::GetCapability)
-            }
-            command_type => Err(DecodeError::UnexpectedVariant {
-                type_name: "CommandType",
-                allowed: &AllowedEnumVariants::Allowed(&[
-                    CommandType::PpmReset as u32,
-                    CommandType::Cancel as u32,
-                    CommandType::AckCcCi as u32,
-                    CommandType::SetNotificationEnable as u32,
-                    CommandType::GetCapability as u32,
-                ]),
-                found: command_type as u32,
-            }),
+    /// Reconstructs a command from its command type and raw payload bytes
+    ///
+    /// Returns [`InvalidCommandType`] if `command_type` is not a PPM command.
+    pub fn from_payload(
+        command_type: CommandType,
+        payload: [u8; Self::PAYLOAD_LEN],
+    ) -> Result<Self, InvalidCommandType> {
+        match command_type {
+            CommandType::PpmReset => Ok(Command::PpmReset),
+            CommandType::Cancel => Ok(Command::Cancel),
+            CommandType::AckCcCi => Ok(Command::AckCcCi(
+                bytemuck::must_cast::<_, ack_cc_ci::ArgsRaw>(payload).into(),
+            )),
+            CommandType::SetNotificationEnable => Ok(Command::SetNotificationEnable(
+                bytemuck::must_cast::<_, set_notification_enable::ArgsRaw>(payload).into(),
+            )),
+            CommandType::GetCapability => Ok(Command::GetCapability),
+            _ => Err(InvalidCommandType(command_type as u8)),
         }
-    }
-}
-
-impl Decode<()> for Command {
-    fn decode<D: Decoder<Context = ()>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let header = CommandHeader::decode(decoder)?;
-        Command::decode(&mut decoder.with_context(header))
     }
 }
 
@@ -125,32 +74,40 @@ pub enum ResponseData {
     GetCapability(get_capability::ResponseData),
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+impl ResponseData {
+    /// Maximum length in bytes of any PPM response data
+    pub const MAX_LEN: usize = get_capability::ResponseDataRaw::LEN;
+
+    /// Returns the command type that produces this response data
+    pub const fn command_type(&self) -> CommandType {
         match self {
-            ResponseData::GetCapability(data) => {
-                let bytes: [u8; get_capability::ResponseDataRaw::LEN] =
-                    bytemuck::must_cast(get_capability::ResponseDataRaw::from(*data));
-                bytes.encode(encoder)
-            }
+            ResponseData::GetCapability(_) => CommandType::GetCapability,
         }
     }
-}
 
-impl Decode<CommandType> for ResponseData {
-    fn decode<D: Decoder<Context = CommandType>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        match decoder.context() {
-            CommandType::GetCapability => {
-                let bytes: [u8; get_capability::ResponseDataRaw::LEN] = Decode::decode(decoder)?;
-                Ok(ResponseData::GetCapability(
-                    bytemuck::must_cast::<_, get_capability::ResponseDataRaw>(bytes).into(),
-                ))
-            }
-            _ => Err(DecodeError::UnexpectedVariant {
-                type_name: "CommandType",
-                allowed: &AllowedEnumVariants::Allowed(&[CommandType::GetCapability as u32]),
-                found: *decoder.context() as u32,
-            }),
+    /// Converts this response data into raw bytes
+    ///
+    /// Returns a [`Self::MAX_LEN`] sized buffer along with the number of valid
+    /// bytes at its start.
+    pub fn to_bytes(&self) -> ([u8; Self::MAX_LEN], usize) {
+        match self {
+            ResponseData::GetCapability(data) => (
+                bytemuck::must_cast(get_capability::ResponseDataRaw::from(*data)),
+                get_capability::ResponseDataRaw::LEN,
+            ),
+        }
+    }
+
+    /// Reconstructs response data from its command type and raw bytes
+    ///
+    /// Returns [`InvalidCommandType`] if `command_type` is not a PPM command
+    /// that produces response data.
+    pub fn from_bytes(command_type: CommandType, bytes: [u8; Self::MAX_LEN]) -> Result<Self, InvalidCommandType> {
+        match command_type {
+            CommandType::GetCapability => Ok(ResponseData::GetCapability(
+                bytemuck::must_cast::<_, get_capability::ResponseDataRaw>(bytes).into(),
+            )),
+            _ => Err(InvalidCommandType(command_type as u8)),
         }
     }
 }
@@ -170,76 +127,100 @@ pub type LocalResponse = Response<LocalPortId>;
 
 #[cfg(test)]
 mod tests {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
-    use crate::ucsi::v1_2::COMMAND_LEN;
 
     #[test]
-    fn test_decode_ppm_reset() {
-        let mut bytes = [0u8; COMMAND_LEN];
-        bytes[0] = CommandType::PpmReset as u8;
+    fn test_ppm_reset_payload() {
+        let payload = [0u8; Command::PAYLOAD_LEN];
 
-        let (ppm_reset, consumed): (Command, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(ppm_reset, Command::PpmReset);
-    }
-
-    #[test]
-    fn test_decode_cancel() {
-        let mut bytes = [0u8; COMMAND_LEN];
-        bytes[0] = CommandType::Cancel as u8;
-
-        let (cancel, consumed): (Command, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(cancel, Command::Cancel);
-    }
-
-    #[test]
-    fn test_decode_ack_cc_ci() {
-        let mut bytes = [0u8; COMMAND_LEN];
-        bytes[0] = CommandType::AckCcCi as u8;
-        bytes[2] = 0x2; // Set connector change ack
-
-        let (ack_cc_ci, consumed): (Command, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
+        assert_eq!(Command::PpmReset.to_payload(), payload);
         assert_eq!(
-            ack_cc_ci,
-            Command::AckCcCi(ack_cc_ci::Args {
-                ack: ack_cc_ci::Ack::from(0x2)
-            })
+            Command::from_payload(CommandType::PpmReset, payload),
+            Ok(Command::PpmReset)
         );
     }
 
     #[test]
-    fn test_decode_set_notification_enable() {
-        let mut bytes = [0u8; COMMAND_LEN];
-        bytes[0] = CommandType::SetNotificationEnable as u8;
-        bytes[2] = 0x1; // Enable command complete notification
+    fn test_cancel_payload() {
+        let payload = [0u8; Command::PAYLOAD_LEN];
 
-        let (set_notification_enable, consumed): (Command, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
+        assert_eq!(Command::Cancel.to_payload(), payload);
+        assert_eq!(Command::from_payload(CommandType::Cancel, payload), Ok(Command::Cancel));
+    }
+
+    #[test]
+    fn test_ack_cc_ci_payload() {
+        let mut payload = [0u8; Command::PAYLOAD_LEN];
+        payload[0] = 0x2; // Ack command complete
+
+        let expected = Command::AckCcCi(ack_cc_ci::Args {
+            ack: ack_cc_ci::Ack::from(0x2),
+        });
+
+        assert_eq!(expected.to_payload(), payload);
+        assert_eq!(Command::from_payload(CommandType::AckCcCi, payload), Ok(expected));
+    }
+
+    #[test]
+    fn test_set_notification_enable_payload() {
+        let mut payload = [0u8; Command::PAYLOAD_LEN];
+        payload[0] = 0x1; // Enable command complete notification
+
+        let expected = Command::SetNotificationEnable(set_notification_enable::Args {
+            notification_enable: set_notification_enable::NotificationEnable::from(0x1),
+        });
+
+        assert_eq!(expected.to_payload(), payload);
         assert_eq!(
-            set_notification_enable,
-            Command::SetNotificationEnable(set_notification_enable::Args {
-                notification_enable: set_notification_enable::NotificationEnable::from(0x1)
-            })
+            Command::from_payload(CommandType::SetNotificationEnable, payload),
+            Ok(expected)
         );
     }
 
     #[test]
-    fn test_decode_get_capability() {
-        let mut bytes = [0u8; COMMAND_LEN];
-        bytes[0] = CommandType::GetCapability as u8;
+    fn test_get_capability_payload() {
+        let payload = [0u8; Command::PAYLOAD_LEN];
 
-        let (get_capability, consumed): (Command, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(get_capability, Command::GetCapability);
+        assert_eq!(Command::GetCapability.to_payload(), payload);
+        assert_eq!(
+            Command::from_payload(CommandType::GetCapability, payload),
+            Ok(Command::GetCapability)
+        );
+    }
+
+    #[test]
+    fn test_from_payload_non_ppm_command() {
+        let payload = [0u8; Command::PAYLOAD_LEN];
+
+        assert_eq!(
+            Command::from_payload(CommandType::GetConnectorStatus, payload),
+            Err(InvalidCommandType(CommandType::GetConnectorStatus as u8))
+        );
+    }
+
+    #[test]
+    fn test_response_data_bytes() {
+        let data = get_capability::ResponseData {
+            num_connectors: 1,
+            ..Default::default()
+        };
+        let expected = ResponseData::GetCapability(data);
+
+        let (bytes, len) = expected.to_bytes();
+        assert_eq!(len, ResponseData::MAX_LEN);
+        assert_eq!(
+            ResponseData::from_bytes(CommandType::GetCapability, bytes),
+            Ok(expected)
+        );
+    }
+
+    #[test]
+    fn test_response_data_from_bytes_invalid_command() {
+        let bytes = [0u8; ResponseData::MAX_LEN];
+
+        assert_eq!(
+            ResponseData::from_bytes(CommandType::PpmReset, bytes),
+            Err(InvalidCommandType(CommandType::PpmReset as u8))
+        );
     }
 }
