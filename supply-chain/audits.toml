@@ -7,6 +7,13 @@ criteria = "safe-to-deploy"
 version = "0.6.0"
 notes = "This is to embedded mermaid diagrams into docs, nothing gets deployed"
 
+[[audits.bytemuck_derive]]
+who = "Robert Zieba <robertzieba@microsoft.com>"
+criteria = "safe-to-deploy"
+version = "1.10.2"
+notes = "Changes support more types of structs and enums, no unsafe changes to the generated code."
+aggregated-from = "https://raw.githubusercontent.com/OpenDevicePartnership/tps6699x/refs/heads/main/supply-chain/audits.toml"
+
 [[audits.include_dir]]
 who = "Robert Zieba <robertzieba@microsoft.com>"
 criteria = "safe-to-deploy"
@@ -21,3 +28,10 @@ version = "0.7.4"
 who = "Robert Zieba <robertzieba@microsoft.com>"
 criteria = "safe-to-deploy"
 version = "0.10.3"
+
+[[audits.pack1]]
+who = "Robert Zieba <robertzieba@microsoft.com>"
+criteria = "safe-to-deploy"
+version = "1.1.0"
+notes = "No unsafe code, only wrapper types around byte arrays, endianness conversion are handled by the built-in `from_*_bytes` functions."
+aggregated-from = "https://raw.githubusercontent.com/OpenDevicePartnership/tps6699x/refs/heads/main/supply-chain/audits.toml"
