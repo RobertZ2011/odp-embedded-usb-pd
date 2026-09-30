@@ -2,6 +2,7 @@
 #![allow(missing_docs)]
 
 use bincode::de::{Decode, Decoder};
+use bincode::enc::write::Writer;
 use bincode::enc::{Encode, Encoder};
 use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bincode::{decode_from_slice, encode_into_slice};
@@ -143,20 +144,31 @@ impl<T: PortId> Command<T> {
 impl<Context, T: PortId> Decode<Context> for Command<T> {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
         let header = CommandHeader::decode(decoder)?;
-        let mut decoder = decoder.with_context(header);
         match header.command() {
             // PPM commands
-            CommandType::PpmReset
+            command_type @ (CommandType::PpmReset
             | CommandType::Cancel
             | CommandType::GetCapability
             | CommandType::AckCcCi
-            | CommandType::SetNotificationEnable => {
-                let command = ppm::Command::decode(&mut decoder)?;
+            | CommandType::SetNotificationEnable) => {
+                let payload: [u8; ppm::Command::PAYLOAD_LEN] = Decode::decode(decoder)?;
+                let command =
+                    ppm::Command::from_payload(command_type, payload).map_err(|_| DecodeError::UnexpectedVariant {
+                        type_name: "CommandType",
+                        allowed: &AllowedEnumVariants::Allowed(&[
+                            CommandType::PpmReset as u32,
+                            CommandType::Cancel as u32,
+                            CommandType::AckCcCi as u32,
+                            CommandType::SetNotificationEnable as u32,
+                            CommandType::GetCapability as u32,
+                        ]),
+                        found: command_type as u32,
+                    })?;
                 Ok(Command::PpmCommand(command))
             }
             // All other commands are LPM commands
             _ => {
-                let command = lpm::Command::decode(&mut decoder)?;
+                let command = lpm::Command::decode(&mut decoder.with_context(header))?;
                 Ok(Command::LpmCommand(command))
             }
         }
@@ -181,7 +193,12 @@ impl ResponseData {
 impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         match self {
-            ResponseData::Ppm(resp) => resp.encode(encoder),
+            ResponseData::Ppm(resp) => {
+                let (bytes, len) = resp.to_bytes();
+                encoder
+                    .writer()
+                    .write(bytes.get(..len).ok_or(EncodeError::UnexpectedEnd)?)
+            }
             ResponseData::Lpm(resp) => resp.encode(encoder),
         }
     }

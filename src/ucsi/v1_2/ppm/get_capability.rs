@@ -1,9 +1,8 @@
 //! Types for the `GetCapability` command, see USCI spec 6.5
 
-use bincode::de::{Decode, Decoder};
-use bincode::enc::{Encode, Encoder};
-use bincode::error::{DecodeError, EncodeError};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
+use pack1::{U16LE, U32LE};
 
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 
@@ -13,29 +12,48 @@ pub const RESPONSE_DATA_LEN: usize = 16;
 pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>();
 
 /// GetCapability command
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Args;
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+/// Raw wire format of [`Args`]
+///
+/// GET_CAPABILITY takes no arguments, the entire payload is reserved.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ArgsRaw {
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ArgsRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ArgsRaw {{ }}")
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Self)
+impl From<Args> for ArgsRaw {
+    fn from(_: Args) -> Self {
+        Self::default()
+    }
+}
+
+impl From<ArgsRaw> for Args {
+    fn from(_: ArgsRaw) -> Self {
+        Self
     }
 }
 
 bitfield! {
     /// Optional features bitmap for GetCapability command
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct OptionalFeaturesRaw(u32);
+    pub struct OptionalFeaturesRaw(u32);
     impl Debug;
 
     /// Supports SET_CCOM
@@ -78,148 +96,78 @@ impl defmt::Format for OptionalFeaturesRaw {
     }
 }
 
-/// Higher-level wrapper around [`OptionalFeaturesRaw`]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Higher-level representation of [`OptionalFeaturesRaw`]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct OptionalFeatures(OptionalFeaturesRaw);
+pub struct OptionalFeatures {
+    /// Supports SET_CCOM
+    pub set_ccom_supported: bool,
+    /// Supports SET_POWER_LEVEL
+    pub set_power_level_supported: bool,
+    /// Supports alternate mode details
+    pub altmode_details_supported: bool,
+    /// Supports alternate mode override
+    pub altmode_override_supported: bool,
+    /// Supports power data object details
+    pub pdo_details_supported: bool,
+    /// Supports cable details
+    pub cable_details_supported: bool,
+    /// Supports external supply notification
+    pub external_supply_notif_supported: bool,
+    /// Supports PD reset notification
+    pub pd_reset_notif_supported: bool,
+    /// Supports GET_PD_MESSAGE
+    pub get_pd_msg_supported: bool,
+}
 
-impl OptionalFeatures {
-    /// Returns whether SET_CCOM is supported
-    pub fn set_ccom_supported(&self) -> bool {
-        self.0.set_ccom_supported()
+impl From<OptionalFeaturesRaw> for OptionalFeatures {
+    fn from(raw: OptionalFeaturesRaw) -> Self {
+        Self {
+            set_ccom_supported: raw.set_ccom_supported(),
+            set_power_level_supported: raw.set_power_level_supported(),
+            altmode_details_supported: raw.altmode_details_supported(),
+            altmode_override_supported: raw.altmode_override_supported(),
+            pdo_details_supported: raw.pdo_details_supported(),
+            cable_details_supported: raw.cable_details_supported(),
+            external_supply_notif_supported: raw.external_supply_notif_supported(),
+            pd_reset_notif_supported: raw.pd_reset_notif_supported(),
+            get_pd_msg_supported: raw.get_pd_msg_supported(),
+        }
     }
+}
 
-    /// Sets whether SET_CCOM is supported
-    pub fn set_set_ccom_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_set_ccom_supported(value);
-        self
-    }
-
-    /// Returns whether SET_POWER_LEVEL is supported
-    pub fn set_power_level_supported(&self) -> bool {
-        self.0.set_power_level_supported()
-    }
-
-    /// Sets whether SET_POWER_LEVEL is supported
-    pub fn set_set_power_level_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_set_power_level_supported(value);
-        self
-    }
-
-    /// Returns whether alternate mode details are supported
-    pub fn altmode_details_supported(&self) -> bool {
-        self.0.altmode_details_supported()
-    }
-
-    /// Sets whether alternate mode details are supported
-    pub fn set_altmode_details_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_altmode_details_supported(value);
-        self
-    }
-
-    /// Returns whether alternate mode override is supported
-    pub fn altmode_override_supported(&self) -> bool {
-        self.0.altmode_override_supported()
-    }
-
-    /// Sets whether alternate mode override is supported
-    pub fn set_altmode_override_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_altmode_override_supported(value);
-        self
-    }
-
-    /// Returns whether PDO details are supported
-    pub fn pdo_details_supported(&self) -> bool {
-        self.0.pdo_details_supported()
-    }
-
-    /// Sets whether PDO details are supported
-    pub fn set_pdo_details_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_pdo_details_supported(value);
-        self
-    }
-
-    /// Returns whether cable details are supported
-    pub fn cable_details_supported(&self) -> bool {
-        self.0.cable_details_supported()
-    }
-
-    /// Sets whether cable details are supported
-    pub fn set_cable_details_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_cable_details_supported(value);
-        self
-    }
-
-    /// Returns whether external supply notification is supported
-    pub fn external_supply_notif_supported(&self) -> bool {
-        self.0.external_supply_notif_supported()
-    }
-
-    /// Sets whether external supply notification is supported
-    pub fn set_external_supply_notif_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_external_supply_notif_supported(value);
-        self
-    }
-
-    /// Returns whether PD reset notification is supported
-    pub fn pd_reset_notif_supported(&self) -> bool {
-        self.0.pd_reset_notif_supported()
-    }
-
-    /// Sets whether PD reset notification is supported
-    pub fn set_pd_reset_notif_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_pd_reset_notif_supported(value);
-        self
-    }
-
-    /// Returns whether GET_PD_MESSAGE is supported
-    pub fn get_pd_msg_supported(&self) -> bool {
-        self.0.get_pd_msg_supported()
-    }
-
-    /// Sets whether GET_PD_MESSAGE is supported
-    pub fn set_get_pd_msg_supported(&mut self, value: bool) -> &mut Self {
-        self.0.set_get_pd_msg_supported(value);
-        self
+impl From<OptionalFeatures> for OptionalFeaturesRaw {
+    fn from(features: OptionalFeatures) -> Self {
+        let mut raw = OptionalFeaturesRaw(0);
+        raw.set_set_ccom_supported(features.set_ccom_supported);
+        raw.set_set_power_level_supported(features.set_power_level_supported);
+        raw.set_altmode_details_supported(features.altmode_details_supported);
+        raw.set_altmode_override_supported(features.altmode_override_supported);
+        raw.set_pdo_details_supported(features.pdo_details_supported);
+        raw.set_cable_details_supported(features.cable_details_supported);
+        raw.set_external_supply_notif_supported(features.external_supply_notif_supported);
+        raw.set_pd_reset_notif_supported(features.pd_reset_notif_supported);
+        raw.set_get_pd_msg_supported(features.get_pd_msg_supported);
+        raw
     }
 }
 
 impl From<u32> for OptionalFeatures {
     fn from(raw: u32) -> Self {
-        OptionalFeatures(OptionalFeaturesRaw(raw))
+        OptionalFeaturesRaw(raw).into()
     }
 }
 
-impl Default for OptionalFeatures {
-    fn default() -> Self {
-        OptionalFeatures(OptionalFeaturesRaw(0))
-    }
-}
-
-impl Encode for OptionalFeatures {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        let raw = self.0 .0;
-        let lower = (raw & 0xFFFF) as u16;
-        let upper = (raw >> 16) as u8;
-        lower.encode(encoder)?;
-        upper.encode(encoder)?;
-        Ok(())
-    }
-}
-
-impl<Context> Decode<Context> for OptionalFeatures {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let lower = u16::decode(decoder)?;
-        let upper = u8::decode(decoder)?;
-        let raw = ((upper as u32) << 16) | (lower as u32);
-        Ok(OptionalFeatures::from(raw))
+impl From<OptionalFeatures> for u32 {
+    fn from(features: OptionalFeatures) -> Self {
+        OptionalFeaturesRaw::from(features).0
     }
 }
 
 bitfield! {
     /// Raw power source data for GetCapability command
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct PowerSourceRaw(u8);
+    pub struct PowerSourceRaw(u8);
     impl Debug;
 
     /// AC supply supported
@@ -244,84 +192,63 @@ impl defmt::Format for PowerSourceRaw {
     }
 }
 
-/// Higher-level wrapper around [`PowerSourceRaw`]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Higher-level representation of [`PowerSourceRaw`]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct PowerSource(PowerSourceRaw);
+pub struct PowerSource {
+    /// AC supply supported
+    pub ac_supply: bool,
+    /// Other supply supported
+    pub other: bool,
+    /// Uses VBUS
+    pub use_vbus: bool,
+}
 
-impl PowerSource {
-    /// Returns whether AC supply is supported
-    pub fn ac_supply(&self) -> bool {
-        self.0.ac_supply()
+impl From<PowerSourceRaw> for PowerSource {
+    fn from(raw: PowerSourceRaw) -> Self {
+        Self {
+            ac_supply: raw.ac_supply(),
+            other: raw.other(),
+            use_vbus: raw.use_vbus(),
+        }
     }
+}
 
-    /// Set whether AC supply is supported
-    pub fn set_ac_supply(&mut self, ac_supply: bool) -> &mut Self {
-        self.0.set_ac_supply(ac_supply);
-        self
-    }
-
-    /// Returns whether other supply is supported
-    pub fn other(&self) -> bool {
-        self.0.other()
-    }
-
-    /// Set whether other supply is supported
-    pub fn set_other(&mut self, other: bool) -> &mut Self {
-        self.0.set_other(other);
-        self
-    }
-
-    /// Returns whether VBUS is used
-    pub fn use_vbus(&self) -> bool {
-        self.0.use_vbus()
-    }
-
-    /// Set whether VBUS is used
-    pub fn set_use_vbus(&mut self, use_vbus: bool) -> &mut Self {
-        self.0.set_uses_vbus(use_vbus);
-        self
+impl From<PowerSource> for PowerSourceRaw {
+    fn from(power_source: PowerSource) -> Self {
+        let mut raw = PowerSourceRaw(0);
+        raw.set_ac_supply(power_source.ac_supply);
+        raw.set_other(power_source.other);
+        raw.set_uses_vbus(power_source.use_vbus);
+        raw
     }
 }
 
 impl From<u8> for PowerSource {
     fn from(raw: u8) -> Self {
-        PowerSource(PowerSourceRaw(raw))
+        PowerSourceRaw(raw).into()
     }
 }
 
-impl Default for PowerSource {
-    fn default() -> Self {
-        PowerSource(PowerSourceRaw(0))
-    }
-}
-
-impl Encode for PowerSource {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.0 .0.encode(encoder)
-    }
-}
-
-impl<Context> Decode<Context> for PowerSource {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u8::decode(decoder)?;
-        Ok(PowerSource::from(raw))
+impl From<PowerSource> for u8 {
+    fn from(power_source: PowerSource) -> Self {
+        PowerSourceRaw::from(power_source).0
     }
 }
 
 bitfield! {
     /// Raw attribute data for GetCapability command
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct AttributesRaw(u32);
+    pub struct AttributesRaw(u32);
     impl Debug;
 
     /// Supports disabled state as defined in Type-C spec
     pub bool, disabled_state_support, set_disabled_state_support: 0;
-    /// PPM supports battery charging spec with version given in [`GetCapabilityDataRaw::bcd_battery_charging_spec`]
+    /// PPM supports battery charging spec with version given in [`ResponseDataRaw::bcd_battery_charging_spec`]
     pub bool, battery_charging, set_battery_charging: 1;
-    /// PPM supports USB PD spec with version given in [`GetCapabilityDataRaw::bcd_usb_pd_spec`]
+    /// PPM supports USB PD spec with version given in [`ResponseDataRaw::bcd_usb_pd_spec`]
     pub bool, usb_power_delivery, set_usb_power_delivery: 2;
-    /// PPM supports USB Type-C spec with version given in [`GetCapabilityDataRaw::bcd_type_c_spec`]
+    /// PPM supports USB Type-C spec with version given in [`ResponseDataRaw::bcd_type_c_spec`]
     pub bool, usb_type_c_current, set_usb_type_c_current: 6;
     /// Supported power sources bitmap
     pub u8, bm_power_source, set_bm_power_source: 15, 8;
@@ -348,90 +275,55 @@ impl defmt::Format for AttributesRaw {
     }
 }
 
-/// Higher-level wrapper around [`AttributesRaw`]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Higher-level representation of [`AttributesRaw`]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Attributes(AttributesRaw);
+pub struct Attributes {
+    /// Supports disabled state as defined in Type-C spec
+    pub disabled_state_support: bool,
+    /// PPM supports battery charging spec with version given in [`ResponseData::bcd_battery_charging_spec`]
+    pub battery_charging: bool,
+    /// PPM supports USB PD spec with version given in [`ResponseData::bcd_usb_pd_spec`]
+    pub usb_power_delivery: bool,
+    /// PPM supports USB Type-C spec with version given in [`ResponseData::bcd_type_c_spec`]
+    pub usb_type_c_current: bool,
+    /// Supported power sources
+    pub power_source: PowerSource,
+}
 
-impl Attributes {
-    /// Returns whether the disabled state is supported
-    pub fn disabled_state_support(&self) -> bool {
-        self.0.disabled_state_support()
+impl From<AttributesRaw> for Attributes {
+    fn from(raw: AttributesRaw) -> Self {
+        Self {
+            disabled_state_support: raw.disabled_state_support(),
+            battery_charging: raw.battery_charging(),
+            usb_power_delivery: raw.usb_power_delivery(),
+            usb_type_c_current: raw.usb_type_c_current(),
+            power_source: raw.bm_power_source().into(),
+        }
     }
+}
 
-    /// Sets whether the disabled state is supported
-    pub fn set_disabled_state_support(&mut self, value: bool) -> &mut Self {
-        self.0.set_disabled_state_support(value);
-        self
-    }
-
-    /// Returns whether battery charging is supported
-    pub fn battery_charging(&self) -> bool {
-        self.0.battery_charging()
-    }
-
-    /// Sets whether battery charging is supported
-    pub fn set_battery_charging(&mut self, value: bool) -> &mut Self {
-        self.0.set_battery_charging(value);
-        self
-    }
-
-    /// Returns whether USB PD is supported
-    pub fn usb_power_delivery(&self) -> bool {
-        self.0.usb_power_delivery()
-    }
-
-    /// Sets whether USB PD is supported
-    pub fn set_usb_power_delivery(&mut self, value: bool) -> &mut Self {
-        self.0.set_usb_power_delivery(value);
-        self
-    }
-
-    /// Returns whether USB Type-C current is supported
-    pub fn usb_type_c_current(&self) -> bool {
-        self.0.usb_type_c_current()
-    }
-
-    /// Sets whether USB Type-C current is supported
-    pub fn set_usb_type_c_current(&mut self, value: bool) -> &mut Self {
-        self.0.set_usb_type_c_current(value);
-        self
-    }
-
-    /// Returns the power source bitmap
-    pub fn power_source(&self) -> PowerSource {
-        self.0.bm_power_source().into()
-    }
-
-    /// Sets the power source bitmap
-    pub fn set_power_source(&mut self, value: PowerSource) -> &mut Self {
-        self.0.set_bm_power_source(value.0 .0);
-        self
+impl From<Attributes> for AttributesRaw {
+    fn from(attributes: Attributes) -> Self {
+        let mut raw = AttributesRaw(0);
+        raw.set_disabled_state_support(attributes.disabled_state_support);
+        raw.set_battery_charging(attributes.battery_charging);
+        raw.set_usb_power_delivery(attributes.usb_power_delivery);
+        raw.set_usb_type_c_current(attributes.usb_type_c_current);
+        raw.set_bm_power_source(attributes.power_source.into());
+        raw
     }
 }
 
 impl From<u32> for Attributes {
     fn from(raw: u32) -> Self {
-        Attributes(AttributesRaw(raw))
+        AttributesRaw(raw).into()
     }
 }
 
-impl Default for Attributes {
-    fn default() -> Self {
-        Attributes(AttributesRaw(0))
-    }
-}
-
-impl Encode for Attributes {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.0 .0.encode(encoder)
-    }
-}
-
-impl<Context> Decode<Context> for Attributes {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u32::decode(decoder)?;
-        Ok(Attributes::from(raw))
+impl From<Attributes> for u32 {
+    fn from(attributes: Attributes) -> Self {
+        AttributesRaw::from(attributes).0
     }
 }
 
@@ -455,48 +347,102 @@ pub struct ResponseData {
     pub bcd_type_c_spec: u16,
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.attributes, encoder)?;
-        Encode::encode(&self.num_connectors, encoder)?;
-        Encode::encode(&self.optional_features, encoder)?;
-        Encode::encode(&self.num_alt_modes, encoder)?;
-        Encode::encode(&0u8, encoder)?; // Reserved byte
-        Encode::encode(&self.bcd_battery_charging_spec, encoder)?;
-        Encode::encode(&self.bcd_usb_pd_spec, encoder)?;
-        Encode::encode(&self.bcd_type_c_spec, encoder)?;
-        Ok(())
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ResponseDataRaw {
+    /// Attributes
+    pub attributes: U32LE,
+    /// Number of connectors
+    pub num_connectors: u8,
+    /// Optional features, a 24-bit little-endian bitmap
+    pub optional_features: [u8; 3],
+    /// Number of supported alternate modes
+    pub num_alt_modes: u8,
+    /// Reserved byte
+    _reserved: u8,
+    /// BCD coded battery charging spec version
+    pub bcd_battery_charging_spec: U16LE,
+    /// BCD coded USB PD spec version
+    pub bcd_usb_pd_spec: U16LE,
+    /// BCD coded Type-C spec version
+    pub bcd_type_c_spec: U16LE,
+}
+
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+
+    /// Returns the optional features bitmap
+    ///
+    /// The field is only 24 bits wide, so it is stored as a byte array rather than a `pack1` type.
+    const fn optional_features_bits(&self) -> u32 {
+        let [low, mid, high] = self.optional_features;
+        u32::from_le_bytes([low, mid, high, 0])
+    }
+
+    /// Truncates an optional features bitmap to the 24 bits available on the wire
+    const fn optional_features_from_bits(bits: u32) -> [u8; 3] {
+        let [low, mid, high, _] = bits.to_le_bytes();
+        [low, mid, high]
     }
 }
 
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let attributes = Attributes::decode(decoder)?;
-        let num_connectors = u8::decode(decoder)?;
-        let optional_features = OptionalFeatures::decode(decoder)?;
-        let num_alt_modes = u8::decode(decoder)?;
-        let _reserved = u8::decode(decoder)?; // Reserved byte
-        let bcd_battery_charging_spec = u16::decode(decoder)?;
-        let bcd_usb_pd_spec = u16::decode(decoder)?;
-        let bcd_type_c_spec = u16::decode(decoder)?;
+#[cfg(feature = "defmt")]
+impl defmt::Format for ResponseDataRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "ResponseDataRaw {{ \
+            attributes: {}, \
+            num_connectors: {}, \
+            optional_features: {}, \
+            num_alt_modes: {}, \
+            bcd_battery_charging_spec: {}, \
+            bcd_usb_pd_spec: {}, \
+            bcd_type_c_spec: {} }}",
+            AttributesRaw(self.attributes.get()),
+            self.num_connectors,
+            OptionalFeaturesRaw(self.optional_features_bits()),
+            self.num_alt_modes,
+            self.bcd_battery_charging_spec.get(),
+            self.bcd_usb_pd_spec.get(),
+            self.bcd_type_c_spec.get()
+        )
+    }
+}
 
-        Ok(ResponseData {
-            attributes,
-            num_connectors,
-            optional_features,
-            num_alt_modes,
-            bcd_battery_charging_spec,
-            bcd_usb_pd_spec,
-            bcd_type_c_spec,
-        })
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        Self {
+            attributes: U32LE::new(data.attributes.into()),
+            num_connectors: data.num_connectors,
+            optional_features: Self::optional_features_from_bits(data.optional_features.into()),
+            num_alt_modes: data.num_alt_modes,
+            _reserved: 0,
+            bcd_battery_charging_spec: U16LE::new(data.bcd_battery_charging_spec),
+            bcd_usb_pd_spec: U16LE::new(data.bcd_usb_pd_spec),
+            bcd_type_c_spec: U16LE::new(data.bcd_type_c_spec),
+        }
+    }
+}
+
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        Self {
+            attributes: raw.attributes.get().into(),
+            num_connectors: raw.num_connectors,
+            optional_features: raw.optional_features_bits().into(),
+            num_alt_modes: raw.num_alt_modes,
+            bcd_battery_charging_spec: raw.bcd_battery_charging_spec.get(),
+            bcd_usb_pd_spec: raw.bcd_usb_pd_spec.get(),
+            bcd_type_c_spec: raw.bcd_type_c_spec.get(),
+        }
     }
 }
 
 #[cfg(test)]
 pub mod test {
-    use bincode::config::standard;
-    use bincode::{decode_from_slice, encode_into_slice};
-
     use super::*;
 
     /// Create a standard response data value for testing
@@ -545,18 +491,66 @@ pub mod test {
     }
 
     #[test]
-    fn test_encode_response_data() {
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_PADDING);
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
+
+    #[test]
+    fn test_response_data_raw_roundtrip() {
         let (expected, bytes) = create_response_data();
 
-        let (response_data, consumed): (ResponseData, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(response_data, expected);
+        let encoded: [u8; ResponseDataRaw::LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(encoded, bytes);
+        assert_eq!(
+            ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(bytes)),
+            expected
+        );
+    }
 
-        let mut encoded_bytes = [0u8; RESPONSE_DATA_LEN];
-        let len = encode_into_slice(expected, &mut encoded_bytes, standard().with_fixed_int_encoding()).unwrap();
+    #[test]
+    fn test_optional_features_24_bit_field() {
+        // The wire field is only 24 bits wide, bit 24 and above cannot be represented
+        assert_eq!(
+            ResponseDataRaw::optional_features_from_bits(0xFFFF_FFFF),
+            [0xFF, 0xFF, 0xFF]
+        );
 
-        assert_eq!(len, RESPONSE_DATA_LEN);
-        assert_eq!(encoded_bytes, bytes);
+        // All nine defined features occupy the low nine bits
+        let raw = ResponseDataRaw::from(ResponseData {
+            optional_features: OptionalFeatures {
+                set_ccom_supported: true,
+                set_power_level_supported: true,
+                altmode_details_supported: true,
+                altmode_override_supported: true,
+                pdo_details_supported: true,
+                cable_details_supported: true,
+                external_supply_notif_supported: true,
+                pd_reset_notif_supported: true,
+                get_pd_msg_supported: true,
+            },
+            ..Default::default()
+        });
+        assert_eq!(raw.optional_features, [0xFF, 0x01, 0x00]);
+        assert_eq!(raw.optional_features_bits(), 0x1FF);
+    }
+
+    #[test]
+    fn test_power_source_roundtrip() {
+        let attributes = Attributes {
+            usb_power_delivery: true,
+            power_source: PowerSource {
+                ac_supply: true,
+                use_vbus: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(Attributes::from(u32::from(attributes)), attributes);
+        assert_eq!(
+            u32::from(attributes) >> 8 & 0xFF,
+            u8::from(attributes.power_source) as u32
+        );
     }
 }

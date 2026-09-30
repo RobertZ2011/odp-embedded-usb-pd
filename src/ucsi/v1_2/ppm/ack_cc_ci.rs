@@ -1,15 +1,13 @@
 //! Types for the ACK_CC_CI command
-use bincode::de::{Decode, Decoder};
-use bincode::enc::{Encode, Encoder};
-use bincode::error::{DecodeError, EncodeError};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
 
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 
 bitfield! {
     /// Raw ack flags, see UCSI spec 6.5.4 for details
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct AckRaw(u8);
+    pub struct AckRaw(u8);
     impl Debug;
 
     /// Ack connector change
@@ -31,57 +29,43 @@ impl defmt::Format for AckRaw {
     }
 }
 
-/// Higher-level wrapper around [`AckRaw`]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Higher-level representation of [`AckRaw`]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Ack(AckRaw);
+pub struct Ack {
+    /// Ack connector change
+    pub connector_change: bool,
+    /// Ack command complete
+    pub command_complete: bool,
+}
 
-impl Ack {
-    /// Returns connector change ack status
-    pub fn connector_change(&self) -> bool {
-        self.0.connector_change()
+impl From<AckRaw> for Ack {
+    fn from(raw: AckRaw) -> Self {
+        Self {
+            connector_change: raw.connector_change(),
+            command_complete: raw.command_complete(),
+        }
     }
+}
 
-    /// Set connector change ack status
-    pub fn set_connector_change(&mut self, ack: bool) -> &mut Self {
-        self.0.set_connector_change(ack);
-        self
-    }
-
-    /// Returns command complete ack status
-    pub fn command_complete(&self) -> bool {
-        self.0.command_complete()
-    }
-
-    /// Set command complete ack status
-    pub fn set_command_complete(&mut self, ack: bool) -> &mut Self {
-        self.0.set_command_complete(ack);
-        self
+impl From<Ack> for AckRaw {
+    fn from(ack: Ack) -> Self {
+        let mut raw = AckRaw(0);
+        raw.set_connector_change(ack.connector_change);
+        raw.set_command_complete(ack.command_complete);
+        raw
     }
 }
 
 impl From<u8> for Ack {
     fn from(raw: u8) -> Self {
-        Self(AckRaw(raw))
+        AckRaw(raw).into()
     }
 }
 
-impl Default for Ack {
-    fn default() -> Self {
-        Self(AckRaw(0))
-    }
-}
-
-impl Encode for Ack {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.0 .0, encoder)
-    }
-}
-
-impl<Context> Decode<Context> for Ack {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u8::decode(decoder)?;
-        Ok(Self::from(raw))
+impl From<Ack> for u8 {
+    fn from(ack: Ack) -> Self {
+        AckRaw::from(ack).0
     }
 }
 
@@ -96,21 +80,92 @@ pub struct Args {
 /// Data length for the ACK_CC_CI command response
 pub const RESPONSE_DATA_LEN: u8 = 0;
 /// Command padding
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<Ack>();
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<AckRaw>();
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.ack.encode(encoder)?;
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+/// Raw wire format of [`Args`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ArgsRaw {
+    /// Ack flags
+    pub ack: u8,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ArgsRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ArgsRaw {{ ack: {} }}", AckRaw(self.ack))
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let ack = Ack::decode(decoder)?;
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Self { ack })
+impl From<Args> for ArgsRaw {
+    fn from(args: Args) -> Self {
+        Self {
+            ack: args.ack.into(),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<ArgsRaw> for Args {
+    fn from(raw: ArgsRaw) -> Self {
+        Self { ack: raw.ack.into() }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+    }
+
+    #[test]
+    fn test_ack_raw_roundtrip() {
+        for raw in 0..=u8::MAX {
+            // Only the two defined bits survive the roundtrip
+            let expected = AckRaw(raw & 0x3);
+            assert_eq!(AckRaw::from(Ack::from(AckRaw(raw))), expected);
+        }
+
+        assert_eq!(
+            Ack::from(0x1),
+            Ack {
+                connector_change: true,
+                command_complete: false
+            }
+        );
+        assert_eq!(
+            Ack::from(0x2),
+            Ack {
+                connector_change: false,
+                command_complete: true
+            }
+        );
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        let args = Args {
+            ack: Ack {
+                connector_change: true,
+                command_complete: true,
+            },
+        };
+
+        let mut expected = [0u8; ArgsRaw::LEN];
+        expected[0] = 0x3;
+
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(args));
+        assert_eq!(bytes, expected);
+        assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(expected)), args);
     }
 }

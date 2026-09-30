@@ -1,14 +1,13 @@
-use bincode::de::{Decode, Decoder};
-use bincode::enc::{Encode, Encoder};
-use bincode::error::{DecodeError, EncodeError};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
+use pack1::U16LE;
 
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 
 bitfield! {
     /// Argument for SET_NOTIFICATION_ENABLE see USCI spec 6.5.5
     #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(super) struct NotificationEnableRaw(u16);
+    pub struct NotificationEnableRaw(u16);
     impl Debug;
 
     /// Notify on command complete
@@ -72,147 +71,40 @@ impl defmt::Format for NotificationEnableRaw {
     }
 }
 
-/// Higher-level wrapper around [`SetNotificationEnableRaw`]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Higher-level representation of [`NotificationEnableRaw`]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NotificationEnable(NotificationEnableRaw);
+pub struct NotificationEnable {
+    /// Notify on command complete
+    pub cmd_complete: bool,
+    /// Notify on external supply change
+    pub external_supply_change: bool,
+    /// Notify on power operation mode change
+    pub power_op_mode_change: bool,
+    /// Notify on provider capabilities change
+    pub provider_caps_change: bool,
+    /// Notify on power level change
+    pub power_lvl_change: bool,
+    /// Notify on PD reset complete
+    pub pd_reset_complete: bool,
+    /// Notify on connector alternate mode change
+    pub cam_change: bool,
+    /// Notify on battery charge change
+    pub battery_charge_change: bool,
+    /// Notify on connector partner change
+    pub connector_partner_change: bool,
+    /// Notify on power direction change
+    pub power_dir_change: bool,
+    /// Notify on connect change
+    pub connect_change: bool,
+    /// Notify on error
+    pub error: bool,
+}
 
 impl NotificationEnable {
-    /// Returns command complete notification status
-    pub fn cmd_complete(&self) -> bool {
-        self.0.cmd_complete()
-    }
-
-    /// Set command complete notification status
-    pub fn set_cmd_complete(&mut self, cmd_complete: bool) -> &mut Self {
-        self.0.set_cmd_complete(cmd_complete);
-        self
-    }
-
-    /// Returns external supply change notification status
-    pub fn external_supply_change(&self) -> bool {
-        self.0.external_supply_change()
-    }
-
-    /// Set external supply change notification status
-    pub fn set_external_supply_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_external_supply_change(val);
-        self
-    }
-
-    /// Returns power operation mode change notification status
-    pub fn power_op_mode_change(&self) -> bool {
-        self.0.power_op_mode_change()
-    }
-
-    /// Set power operation mode change notification status
-    pub fn set_power_op_mode_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_power_op_mode_change(val);
-        self
-    }
-
-    /// Returns provider capabilities change notification status
-    pub fn provider_caps_change(&self) -> bool {
-        self.0.provider_caps_change()
-    }
-
-    /// Set provider capabilities change notification status
-    pub fn set_provider_caps_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_provider_caps_change(val);
-        self
-    }
-
-    /// Returns power level change notification status
-    pub fn power_lvl_change(&self) -> bool {
-        self.0.power_lvl_change()
-    }
-
-    /// Set power level change notification status
-    pub fn set_power_lvl_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_power_lvl_change(val);
-        self
-    }
-
-    /// Returns PD reset complete notification status
-    pub fn pd_reset_complete(&self) -> bool {
-        self.0.pd_reset_complete()
-    }
-
-    /// Set PD reset complete notification status
-    pub fn set_pd_reset_complete(&mut self, val: bool) -> &mut Self {
-        self.0.set_pd_reset_complete(val);
-        self
-    }
-
-    /// Returns connector alt mode change notification status
-    pub fn cam_change(&self) -> bool {
-        self.0.cam_change()
-    }
-
-    /// Set connector alt mode change notification status
-    pub fn set_cam_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_cam_change(val);
-        self
-    }
-
-    /// Returns battery charge change notification status
-    pub fn battery_charge_change(&self) -> bool {
-        self.0.battery_charge_change()
-    }
-
-    /// Set battery charge change notification status
-    pub fn set_battery_charge_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_battery_charge_change(val);
-        self
-    }
-
-    /// Returns connector partner change notification status
-    pub fn connector_partner_change(&self) -> bool {
-        self.0.connector_partner_change()
-    }
-
-    /// Set connector partner change notification status
-    pub fn set_connector_partner_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_connector_partner_change(val);
-        self
-    }
-
-    /// Returns power direction change notification status
-    pub fn power_dir_change(&self) -> bool {
-        self.0.power_dir_change()
-    }
-
-    /// Set power direction change notification status
-    pub fn set_power_dir_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_power_dir_change(val);
-        self
-    }
-
-    /// Returns connect change notification status
-    pub fn connect_change(&self) -> bool {
-        self.0.connect_change()
-    }
-
-    /// Set connect change notification status
-    pub fn set_connect_change(&mut self, val: bool) -> &mut Self {
-        self.0.set_connect_change(val);
-        self
-    }
-
-    /// Returns error notification status
-    pub fn error(&self) -> bool {
-        self.0.error()
-    }
-
-    /// Set error notification status
-    pub fn set_error(&mut self, val: bool) -> &mut Self {
-        self.0.set_error(val);
-        self
-    }
-
     /// Returns true if no notification is enabled
     pub fn is_empty(&self) -> bool {
-        self.0 .0 == 0
+        *self == Self::default()
     }
 
     /// Returns true if any status change flags are set
@@ -222,43 +114,62 @@ impl NotificationEnable {
 
     /// Returns the union of two notification enable sets
     pub fn union(&self, other: &Self) -> Self {
-        NotificationEnable(NotificationEnableRaw(self.0 .0 | other.0 .0))
+        Self::from(u16::from(*self) | u16::from(*other))
     }
 
     /// Returns the intersection of two notification enable sets
     pub fn intersection(&self, other: &Self) -> Self {
-        NotificationEnable(NotificationEnableRaw(self.0 .0 & other.0 .0))
+        Self::from(u16::from(*self) & u16::from(*other))
+    }
+}
+
+impl From<NotificationEnableRaw> for NotificationEnable {
+    fn from(raw: NotificationEnableRaw) -> Self {
+        Self {
+            cmd_complete: raw.cmd_complete(),
+            external_supply_change: raw.external_supply_change(),
+            power_op_mode_change: raw.power_op_mode_change(),
+            provider_caps_change: raw.provider_caps_change(),
+            power_lvl_change: raw.power_lvl_change(),
+            pd_reset_complete: raw.pd_reset_complete(),
+            cam_change: raw.cam_change(),
+            battery_charge_change: raw.battery_charge_change(),
+            connector_partner_change: raw.connector_partner_change(),
+            power_dir_change: raw.power_dir_change(),
+            connect_change: raw.connect_change(),
+            error: raw.error(),
+        }
+    }
+}
+
+impl From<NotificationEnable> for NotificationEnableRaw {
+    fn from(enable: NotificationEnable) -> Self {
+        let mut raw = NotificationEnableRaw(0);
+        raw.set_cmd_complete(enable.cmd_complete);
+        raw.set_external_supply_change(enable.external_supply_change);
+        raw.set_power_op_mode_change(enable.power_op_mode_change);
+        raw.set_provider_caps_change(enable.provider_caps_change);
+        raw.set_power_lvl_change(enable.power_lvl_change);
+        raw.set_pd_reset_complete(enable.pd_reset_complete);
+        raw.set_cam_change(enable.cam_change);
+        raw.set_battery_charge_change(enable.battery_charge_change);
+        raw.set_connector_partner_change(enable.connector_partner_change);
+        raw.set_power_dir_change(enable.power_dir_change);
+        raw.set_connect_change(enable.connect_change);
+        raw.set_error(enable.error);
+        raw
     }
 }
 
 impl From<u16> for NotificationEnable {
     fn from(raw: u16) -> Self {
-        NotificationEnable(NotificationEnableRaw(raw))
+        NotificationEnableRaw(raw).into()
     }
 }
 
 impl From<NotificationEnable> for u16 {
     fn from(enable: NotificationEnable) -> Self {
-        enable.0 .0
-    }
-}
-
-impl Default for NotificationEnable {
-    fn default() -> Self {
-        NotificationEnable(NotificationEnableRaw(0))
-    }
-}
-
-impl Encode for NotificationEnable {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.0 .0, encoder)
-    }
-}
-
-impl<Context> Decode<Context> for NotificationEnable {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u16::decode(decoder)?;
-        Ok(NotificationEnable::from(raw))
+        NotificationEnableRaw::from(enable).0
     }
 }
 
@@ -273,21 +184,119 @@ pub struct Args {
 /// Data length for the SET_NOTIFICATION_ENABLE command response
 pub const RESPONSE_DATA_LEN: u8 = 0;
 /// Command padding
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<NotificationEnable>();
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<NotificationEnableRaw>();
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.notification_enable.encode(encoder)?;
-        // Padding to match the expected header size
-        [0u8; COMMAND_PADDING].encode(encoder)
+/// Raw wire format of [`Args`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ArgsRaw {
+    /// Notification enable flags
+    pub notification_enable: U16LE,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ArgsRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "ArgsRaw {{ notification_enable: {} }}",
+            NotificationEnableRaw(self.notification_enable.get())
+        )
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let notification_enable = NotificationEnable::decode(decoder)?;
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Args { notification_enable })
+impl From<Args> for ArgsRaw {
+    fn from(args: Args) -> Self {
+        Self {
+            notification_enable: U16LE::new(args.notification_enable.into()),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<ArgsRaw> for Args {
+    fn from(raw: ArgsRaw) -> Self {
+        Self {
+            notification_enable: raw.notification_enable.get().into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Mask of all bits defined by [`NotificationEnableRaw`]
+    const DEFINED_BITS: u16 = 0b1101_1011_1110_0111;
+
+    #[test]
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+    }
+
+    #[test]
+    fn test_notification_enable_roundtrip() {
+        for bit in 0..u16::BITS {
+            let raw = NotificationEnableRaw(1 << bit);
+            // Undefined bits are dropped by the roundtrip
+            let expected = NotificationEnableRaw(raw.0 & DEFINED_BITS);
+            assert_eq!(NotificationEnableRaw::from(NotificationEnable::from(raw)), expected);
+        }
+
+        assert_eq!(u16::from(NotificationEnable::from(DEFINED_BITS)), DEFINED_BITS);
+    }
+
+    #[test]
+    fn test_notification_enable_set_ops() {
+        let empty = NotificationEnable::default();
+        assert!(empty.is_empty());
+        assert!(!empty.any());
+
+        let cmd_complete = NotificationEnable {
+            cmd_complete: true,
+            ..Default::default()
+        };
+        let error = NotificationEnable {
+            error: true,
+            ..Default::default()
+        };
+
+        assert!(cmd_complete.any());
+        assert_eq!(
+            cmd_complete.union(&error),
+            NotificationEnable {
+                cmd_complete: true,
+                error: true,
+                ..Default::default()
+            }
+        );
+        assert_eq!(cmd_complete.intersection(&error), empty);
+        assert_eq!(cmd_complete.intersection(&cmd_complete), cmd_complete);
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        let args = Args {
+            notification_enable: NotificationEnable {
+                cmd_complete: true,
+                error: true,
+                ..Default::default()
+            },
+        };
+
+        let mut expected = [0u8; ArgsRaw::LEN];
+        expected[0] = 0x01;
+        expected[1] = 0x80;
+
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(args));
+        assert_eq!(bytes, expected);
+        assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(expected)), args);
     }
 }

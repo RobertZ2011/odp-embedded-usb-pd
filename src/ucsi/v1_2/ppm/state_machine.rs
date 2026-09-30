@@ -118,7 +118,7 @@ impl<T: PortId> StateMachine<T> {
             // Idle(true) successful transitions
             (Idle(true), BusyChanged) => (Busy(true), None),
             (Idle(true), Command(cmd @ ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args)))) => {
-                if args.ack.command_complete() {
+                if args.ack.command_complete {
                     // This should only happen in WaitForCommandCompleteAck
                     return Err(InvalidTransition {
                         state: self.state,
@@ -137,7 +137,7 @@ impl<T: PortId> StateMachine<T> {
 
             // WaitForCommandCompleteAck transitions
             (WaitForCommandCompleteAck, Command(ucsi::Command::PpmCommand(ucsi::ppm::Command::AckCcCi(args))))
-                if args.ack.command_complete() =>
+                if args.ack.command_complete =>
             {
                 (Idle(true), Some(AckComplete(args.ack)))
             }
@@ -299,7 +299,10 @@ mod test {
         // Test rejection of command completion ACK
         sm.state = State::Idle(true);
         let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
-            ack: *ppm::ack_cc_ci::Ack::default().set_command_complete(true),
+            ack: ppm::ack_cc_ci::Ack {
+                command_complete: true,
+                ..Default::default()
+            },
         }));
         let res = sm.consume(Input::Command(&cmd));
         assert_eq!(
@@ -314,7 +317,10 @@ mod test {
         // Test acceptance of connector change ACK
         sm.state = State::Idle(true);
         let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
-            ack: *ppm::ack_cc_ci::Ack::default().set_connector_change(true),
+            ack: ppm::ack_cc_ci::Ack {
+                connector_change: true,
+                ..Default::default()
+            },
         }));
         let res = sm.consume(Input::Command(&cmd));
         assert_eq!(res, Ok(Some(Output::ExecuteCommand(&cmd))));
@@ -328,7 +334,10 @@ mod test {
         sm.state = State::WaitForCommandCompleteAck;
 
         // Command complete ACK should succeed
-        let ack = *ppm::ack_cc_ci::Ack::default().set_command_complete(true);
+        let ack = ppm::ack_cc_ci::Ack {
+            command_complete: true,
+            ..Default::default()
+        };
         let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args { ack }));
         let res = sm.consume(Input::Command(&cmd));
         assert_eq!(res, Ok(Some(Output::AckComplete(ack))));
@@ -337,7 +346,10 @@ mod test {
         // Connector change ACK only should fail
         sm.state = State::WaitForCommandCompleteAck;
         let cmd = Command::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
-            ack: *ppm::ack_cc_ci::Ack::default().set_connector_change(true),
+            ack: ppm::ack_cc_ci::Ack {
+                connector_change: true,
+                ..Default::default()
+            },
         }));
         let res = sm.consume(Input::Command(&cmd));
         assert_eq!(
