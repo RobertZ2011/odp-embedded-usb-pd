@@ -90,7 +90,7 @@ impl<T: PortId> Command<T> {
         // TODO: Figure out how to remove this
         match self.operation {
             CommandData::SetPowerLevel(ref mut args) => {
-                args.set_connector_number(self.port.into());
+                args.connector_number = self.port.into();
             }
             CommandData::SetNewCam(ref mut args) => {
                 args.connector_number = self.port.into();
@@ -155,7 +155,9 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::SetPowerLevel(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                args.encode(encoder)
+                let bytes: [u8; set_power_level::ArgsRaw::LEN] =
+                    bytemuck::must_cast(set_power_level::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
             CommandData::SetNewCam(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
@@ -242,9 +244,15 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::SetPowerLevel => {
                 // The connector number is combined with arguments, let it handle everything
-                let args = set_power_level::Args::decode(decoder)?;
+                let bytes = <[u8; set_power_level::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = set_power_level::Args::try_from(bytemuck::must_cast::<_, set_power_level::ArgsRaw>(bytes))
+                    .map_err(|invalid_current| DecodeError::UnexpectedVariant {
+                    type_name: "Current",
+                    allowed: &AllowedEnumVariants::Range { min: 0, max: 3 },
+                    found: invalid_current.0 as u32,
+                })?;
                 Ok(Command {
-                    port: From::from(args.connector_number()),
+                    port: From::from(args.connector_number),
                     operation: CommandData::SetPowerLevel(args),
                 })
             }
@@ -592,13 +600,34 @@ mod tests {
             set_power_level,
             GlobalCommand {
                 port: GlobalPortId(1),
-                operation: CommandData::SetPowerLevel(
-                    *set_power_level::Args::default()
-                        .set_connector_number(1)
-                        .set_power_role(PowerRole::Source)
-                )
+                operation: CommandData::SetPowerLevel(set_power_level::Args {
+                    connector_number: 1,
+                    power_role: PowerRole::Source,
+                    ..Default::default()
+                })
             }
         )
+    }
+
+    #[test]
+    fn test_decode_set_power_level_invalid_current() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::SetPowerLevel as u8;
+        bytes[2] = 0x01;
+        // Invalid type_c_current value (0x4) at bits 18:16
+        bytes[4] = 0x04;
+
+        let Err(DecodeError::UnexpectedVariant {
+            type_name,
+            allowed,
+            found,
+        }) = decode_from_slice::<GlobalCommand, _>(&bytes, standard().with_fixed_int_encoding())
+        else {
+            panic!("Expected UnexpectedVariant error");
+        };
+        assert_eq!(type_name, "Current");
+        assert_eq!(*allowed, AllowedEnumVariants::Range { min: 0, max: 3 });
+        assert_eq!(found, 0x04);
     }
 
     #[test]
