@@ -1,10 +1,8 @@
 //! Types for GET_ALTERNATE_MODES command, see UCSI spec 6.5.11
 
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
+use pack1::{U16LE, U32LE};
 
 use super::Recipient;
 use crate::ucsi::v1_2::lpm::InvalidRecipient;
@@ -15,17 +13,17 @@ use crate::vdm::AltModeId;
 /// Data length for the GET_ALTERNATE_MODES command response
 pub const RESPONSE_DATA_LEN: usize = 12;
 /// Command padding
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgsRaw>();
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgBitsRaw>();
 
 bitfield! {
-    /// Raw arguments
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(super) struct ArgsRaw(u32);
+    /// Raw argument bits
+    #[derive(Copy, Clone, Default, PartialEq, Eq)]
+    pub struct ArgBitsRaw(u32);
     impl Debug;
 
     /// Recipient
     pub u8, recipient, set_recipient: 2, 0;
-    /// Connector number
+    /// Connector number, unlike most commands this is not in the first byte
     pub u8, connector_number, set_connector_number: 14, 8;
     /// Alternate mode offset
     pub u8, mode_offset, set_mode_offset: 23, 16;
@@ -34,11 +32,11 @@ bitfield! {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ArgsRaw {
+impl defmt::Format for ArgBitsRaw {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "ArgsRaw {{ .0: {}, recipient: {}, connector_number: {}, mode_offset: {}, num_modes: {} }}",
+            "ArgBitsRaw {{ .0: {}, recipient: {}, connector_number: {}, mode_offset: {}, num_modes: {} }}",
             self.0,
             self.recipient(),
             self.connector_number(),
@@ -51,51 +49,49 @@ impl defmt::Format for ArgsRaw {
 /// Command arguments
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args(ArgsRaw);
+pub struct Args {
+    /// Recipient
+    pub recipient: Recipient,
+    /// Connector number
+    pub connector_number: u8,
+    /// Alternate mode offset
+    pub mode_offset: u8,
+    /// Number of alternate modes
+    pub num_modes: u8,
+}
 
-impl Args {
-    pub fn recipient(&self) -> Recipient {
-        // Panic Safety: ArgsRaw::recipient is guaranteed to be a valid and defined value of Recipient:
-        // 1. Args::set_recipient only accepts Recipient values
-        // 2. ArgsRaw::set_recipient is only set with values from u8::from(Recipient)
-        // 3. Recipient::try_from(u8) only fails for undefined values and is unit tested with all defined values to roundtrip correctly
-        // 4. The only way to construct an Args is through Args::try_from(u32), which validates Recipient::try_from(u8)
-        #[allow(clippy::unwrap_used)]
-        self.0.recipient().try_into().unwrap()
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            recipient: Recipient::Connector,
+            connector_number: 0,
+            mode_offset: 0,
+            num_modes: 0,
+        }
     }
+}
 
-    // NOTE: Self::recipient has a SAFETY requirement on argument being `Recipient` and only setting with values
-    // returned from `impl From<Recipient> for u8`
-    pub fn set_recipient(&mut self, recipient: Recipient) -> &mut Self {
-        self.0.set_recipient(recipient.into());
-        self
+impl TryFrom<ArgBitsRaw> for Args {
+    type Error = InvalidRecipient;
+
+    fn try_from(raw: ArgBitsRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            recipient: raw.recipient().try_into()?,
+            connector_number: raw.connector_number(),
+            mode_offset: raw.mode_offset(),
+            num_modes: raw.num_modes(),
+        })
     }
+}
 
-    pub fn connector_number(&self) -> u8 {
-        self.0.connector_number()
-    }
-
-    pub fn set_connector_number(&mut self, number: u8) -> &mut Self {
-        self.0.set_connector_number(number);
-        self
-    }
-
-    pub fn mode_offset(&self) -> u8 {
-        self.0.mode_offset()
-    }
-
-    pub fn set_mode_offset(&mut self, offset: u8) -> &mut Self {
-        self.0.set_mode_offset(offset);
-        self
-    }
-
-    pub fn num_modes(&self) -> u8 {
-        self.0.num_modes()
-    }
-
-    pub fn set_num_modes(&mut self, num: u8) -> &mut Self {
-        self.0.set_num_modes(num);
-        self
+impl From<Args> for ArgBitsRaw {
+    fn from(args: Args) -> Self {
+        let mut raw = ArgBitsRaw(0);
+        raw.set_recipient(args.recipient.into());
+        raw.set_connector_number(args.connector_number);
+        raw.set_mode_offset(args.mode_offset);
+        raw.set_num_modes(args.num_modes);
+        raw
     }
 }
 
@@ -103,50 +99,52 @@ impl TryFrom<u32> for Args {
     type Error = InvalidRecipient;
 
     fn try_from(raw: u32) -> Result<Self, Self::Error> {
-        // note: safety requirements must be upheld by validating enum fields are valid defined values
-        let raw = ArgsRaw(raw);
-        let _recipient: Recipient = (raw.recipient()).try_into()?;
-
-        // all fields are valid
-        Ok(Args(raw))
+        ArgBitsRaw(raw).try_into()
     }
 }
 
 impl From<Args> for u32 {
     fn from(args: Args) -> Self {
-        args.0 .0
+        ArgBitsRaw::from(args).0
     }
 }
 
-impl Default for Args {
-    fn default() -> Self {
-        Args(ArgsRaw(0))
+/// Raw wire format of [`Args`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ArgsRaw {
+    /// Argument bits, see [`ArgBitsRaw`]
+    pub bits: U32LE,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ArgsRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ArgsRaw {{ bits: {} }}", ArgBitsRaw(self.bits.get()))
     }
 }
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.0 .0, encoder)?;
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+impl From<Args> for ArgsRaw {
+    fn from(args: Args) -> Self {
+        Self {
+            bits: U32LE::new(args.into()),
+            ..Default::default()
+        }
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u32::decode(decoder)?;
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Args::try_from(raw).map_err(|invalid_recipient| DecodeError::UnexpectedVariant {
-            type_name: "Recipient",
-            allowed: &bincode::error::AllowedEnumVariants::Allowed(&[
-                Recipient::Connector as u32,
-                Recipient::Sop as u32,
-                Recipient::SopP as u32,
-                Recipient::SopPp as u32,
-            ]),
-            found: invalid_recipient.0 as u32,
-        })
+impl TryFrom<ArgsRaw> for Args {
+    type Error = InvalidRecipient;
+
+    fn try_from(raw: ArgsRaw) -> Result<Self, Self::Error> {
+        raw.bits.get().try_into()
     }
 }
 
@@ -156,6 +154,46 @@ impl<Context> Decode<Context> for Args {
 pub struct AltMode {
     pub svid: Svid,
     pub mid: AltModeId,
+}
+
+/// Raw wire format of [`AltMode`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct AltModeRaw {
+    /// SVID
+    pub svid: U16LE,
+    /// Mode ID
+    pub mid: U32LE,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for AltModeRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "AltModeRaw {{ svid: {}, mid: {} }}",
+            self.svid.get(),
+            self.mid.get()
+        )
+    }
+}
+
+impl From<AltMode> for AltModeRaw {
+    fn from(alt_mode: AltMode) -> Self {
+        Self {
+            svid: U16LE::new(alt_mode.svid.0),
+            mid: U32LE::new(alt_mode.mid.0),
+        }
+    }
+}
+
+impl From<AltModeRaw> for AltMode {
+    fn from(raw: AltModeRaw) -> Self {
+        Self {
+            svid: Svid(raw.svid.get()),
+            mid: AltModeId(raw.mid.get()),
+        }
+    }
 }
 
 /// Length of the alternate modes array
@@ -168,87 +206,94 @@ pub struct ResponseData {
     pub alt_modes: [AltMode; ALT_MODES_LEN],
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        for alt_mode in &self.alt_modes {
-            alt_mode.svid.0.encode(encoder)?;
-            alt_mode.mid.0.encode(encoder)?;
-        }
-        Ok(())
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ResponseDataRaw {
+    /// Alternate modes
+    pub alt_modes: [AltModeRaw; ALT_MODES_LEN],
+}
+
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ResponseDataRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ResponseDataRaw {{ alt_modes: {} }}", self.alt_modes)
     }
 }
 
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let mut alt_modes = [AltMode::default(); ALT_MODES_LEN];
-        for alt_mode in &mut alt_modes {
-            alt_mode.svid = Svid(u16::decode(decoder)?);
-            alt_mode.mid = AltModeId(u32::decode(decoder)?);
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        Self {
+            alt_modes: data.alt_modes.map(AltModeRaw::from),
         }
-        Ok(ResponseData { alt_modes })
+    }
+}
+
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        Self {
+            alt_modes: raw.alt_modes.map(AltMode::from),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
 
     #[test]
-    fn test_decode_args() {
-        // SOP on connector 3, 2 requested alt modes
-        let encoded: [u8; 6] = [0x01, 0x3, 0x1, 0x2, 0x0, 0x0];
-        let (decoded, size): (Args, usize) = decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(size, 6);
-
-        let mut expected = Args::default();
-        expected.set_connector_number(3);
-        expected.set_num_modes(2);
-        expected.set_recipient(Recipient::Sop);
-        expected.set_mode_offset(1);
-        assert_eq!(decoded, expected);
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
     }
 
     #[test]
-    fn test_decode_args_invalid_recipient() {
-        // Invalid recipient (0x7), connector 3, 2 requested alt modes, mode offset 1
-        let encoded: [u8; 6] = [0x07, 0x3, 0x1, 0x2, 0x0, 0x0];
-        let Err(bincode::error::DecodeError::UnexpectedVariant {
-            type_name,
-            allowed,
-            found,
-        }): Result<(Args, usize), _> = decode_from_slice(&encoded, standard().with_fixed_int_encoding())
-        else {
-            panic!("Expected UnexpectedVariant error");
+    fn test_args_raw_roundtrip() {
+        // SOP on connector 3, mode offset 1, 2 requested alt modes
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0x03, 0x01, 0x02, 0x00, 0x00];
+        let expected = Args {
+            recipient: Recipient::Sop,
+            connector_number: 3,
+            mode_offset: 1,
+            num_modes: 2,
         };
-        assert_eq!(type_name, "Recipient");
-        assert_eq!(
-            *allowed,
-            bincode::error::AllowedEnumVariants::Allowed(&[
-                Recipient::Connector as u32,
-                Recipient::Sop as u32,
-                Recipient::SopP as u32,
-                Recipient::SopPp as u32,
-            ])
-        );
-        assert_eq!(found, 0x07);
+
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        assert_eq!(bytes, encoded);
     }
 
     #[test]
-    fn test_decode_response_data() {
-        // No particular meaning to these values
-        let encoded: [u8; RESPONSE_DATA_LEN] = [0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78];
-        let (decoded, size): (ResponseData, usize) =
-            decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(size, RESPONSE_DATA_LEN);
+    fn test_args_raw_invalid_recipient() {
+        // Invalid recipient (0x7), connector 3, 2 requested alt modes, mode offset 1
+        let encoded: [u8; ArgsRaw::LEN] = [0x07, 0x03, 0x01, 0x02, 0x00, 0x00];
+        assert_eq!(
+            Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)),
+            Err(InvalidRecipient(0x07))
+        );
+    }
 
+    #[test]
+    fn test_response_data_raw_roundtrip() {
+        // No particular meaning to these values
+        let encoded: [u8; ResponseDataRaw::LEN] =
+            [0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78];
         let mut expected = ResponseData::default();
         expected.alt_modes[0].svid = Svid(0x1234);
         expected.alt_modes[0].mid = AltModeId(0x12345678);
         expected.alt_modes[1].svid = Svid(0x3412);
         expected.alt_modes[1].mid = AltModeId(0x78563412);
-        assert_eq!(decoded, expected);
+
+        assert_eq!(
+            ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(encoded)),
+            expected
+        );
+        let bytes: [u8; ResponseDataRaw::LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(bytes, encoded);
     }
 }

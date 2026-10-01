@@ -105,7 +105,7 @@ impl<T: PortId> Command<T> {
                 args.connector_number = self.port.into();
             }
             CommandData::GetAlternateModes(ref mut args) => {
-                args.set_connector_number(self.port.into());
+                args.connector_number = self.port.into();
             }
             CommandData::GetPdos(ref mut args) => {
                 args.set_connector_number(self.port.into());
@@ -186,7 +186,9 @@ impl<T: PortId> Encode for Command<T> {
             CommandData::GetAlternateModes(args) => {
                 // This command has a different format without a leading port number
                 // TODO: Figure out if this can stay an exception or if each command is responsible for pulling its port number.
-                args.encode(encoder)
+                let bytes: [u8; get_alternate_modes::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_alternate_modes::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
             CommandData::GetCamSupported => {
                 raw_port.encode(encoder)?;
@@ -303,9 +305,12 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::GetAlternateModes => {
                 // This command has a different format without a leading port number
-                let args = get_alternate_modes::Args::decode(decoder)?;
+                let bytes = <[u8; get_alternate_modes::ArgsRaw::LEN]>::decode(decoder)?;
+                let args =
+                    get_alternate_modes::Args::try_from(bytemuck::must_cast::<_, get_alternate_modes::ArgsRaw>(bytes))
+                        .map_err(DecodeError::from)?;
                 Ok(Command {
-                    port: From::from(args.connector_number()),
+                    port: From::from(args.connector_number),
                     operation: CommandData::GetAlternateModes(args),
                 })
             }
@@ -394,7 +399,11 @@ impl Encode for ResponseData {
             ResponseData::GetConnectorStatus(data) => data.encode(encoder),
             ResponseData::GetConnectorCapability(data) => data.encode(encoder),
             ResponseData::GetErrorStatus(data) => data.encode(encoder),
-            ResponseData::GetAlternateModes(data) => data.encode(encoder),
+            ResponseData::GetAlternateModes(data) => {
+                let bytes: [u8; get_alternate_modes::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_alternate_modes::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
             ResponseData::GetCamSupported(data) => data.encode(encoder),
             ResponseData::GetCurrentCam(data) => data.encode(encoder),
             ResponseData::GetPdos(data) => data.encode(encoder),
@@ -417,9 +426,12 @@ impl Decode<CommandType> for ResponseData {
             CommandType::GetErrorStatus => Ok(ResponseData::GetErrorStatus(get_error_status::ResponseData::decode(
                 decoder,
             )?)),
-            CommandType::GetAlternateModes => Ok(ResponseData::GetAlternateModes(
-                get_alternate_modes::ResponseData::decode(decoder)?,
-            )),
+            CommandType::GetAlternateModes => {
+                let bytes = <[u8; get_alternate_modes::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetAlternateModes(
+                    bytemuck::must_cast::<_, get_alternate_modes::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             CommandType::GetCamSupported => Ok(ResponseData::GetCamSupported(get_cam_supported::ResponseData::decode(
                 decoder,
             )?)),
@@ -520,6 +532,21 @@ impl From<Recipient> for u8 {
             Recipient::Sop => 0x1,
             Recipient::SopP => 0x2,
             Recipient::SopPp => 0x3,
+        }
+    }
+}
+
+impl From<InvalidRecipient> for DecodeError {
+    fn from(value: InvalidRecipient) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "Recipient",
+            allowed: &AllowedEnumVariants::Allowed(&[
+                Recipient::Connector as u32,
+                Recipient::Sop as u32,
+                Recipient::SopP as u32,
+                Recipient::SopPp as u32,
+            ]),
+            found: value.0 as u32,
         }
     }
 }
@@ -643,11 +670,39 @@ mod tests {
             get_alternate_modes,
             GlobalCommand {
                 port: GlobalPortId(0),
-                operation: CommandData::GetAlternateModes(
-                    *get_alternate_modes::Args::default().set_recipient(Recipient::Sop)
-                ),
+                operation: CommandData::GetAlternateModes(get_alternate_modes::Args {
+                    recipient: Recipient::Sop,
+                    ..Default::default()
+                }),
             }
         );
+    }
+
+    #[test]
+    fn test_decode_get_alternate_modes_invalid_recipient() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::GetAlternateModes as u8;
+        bytes[2] = 0x7; // Invalid recipient
+
+        let Err(DecodeError::UnexpectedVariant {
+            type_name,
+            allowed,
+            found,
+        }) = decode_from_slice::<GlobalCommand, _>(&bytes, standard().with_fixed_int_encoding())
+        else {
+            panic!("Expected UnexpectedVariant error");
+        };
+        assert_eq!(type_name, "Recipient");
+        assert_eq!(
+            *allowed,
+            AllowedEnumVariants::Allowed(&[
+                Recipient::Connector as u32,
+                Recipient::Sop as u32,
+                Recipient::SopP as u32,
+                Recipient::SopPp as u32,
+            ])
+        );
+        assert_eq!(found, 0x7);
     }
 
     #[test]
