@@ -96,7 +96,7 @@ impl<T: PortId> Command<T> {
                 args.connector_number = self.port.into();
             }
             CommandData::SetCcom(ref mut args) => {
-                args.set_connector_number(self.port.into());
+                args.connector_number = self.port.into();
             }
             CommandData::SetUor(ref mut args) => {
                 args.set_connector_number(self.port.into());
@@ -167,7 +167,8 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::SetCcom(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                args.encode(encoder)
+                let bytes: [u8; set_ccom::ArgsRaw::LEN] = bytemuck::must_cast(set_ccom::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
             CommandData::SetUor(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
@@ -263,9 +264,10 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::SetCcom => {
                 // The connector number is combined with arguments, let it handle everything
-                let args = set_ccom::Args::decode(decoder)?;
+                let bytes = <[u8; set_ccom::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = set_ccom::Args::from(bytemuck::must_cast::<_, set_ccom::ArgsRaw>(bytes));
                 Ok(Command {
-                    port: From::from(args.connector_number()),
+                    port: From::from(args.connector_number),
                     operation: CommandData::SetCcom(args),
                 })
             }
@@ -626,7 +628,11 @@ mod tests {
             set_ccom,
             GlobalCommand {
                 port: GlobalPortId(1),
-                operation: CommandData::SetCcom(*set_ccom::Args::default().set_connector_number(1).set_rp(true)),
+                operation: CommandData::SetCcom(set_ccom::Args {
+                    connector_number: 1,
+                    rp: true,
+                    ..Default::default()
+                }),
             }
         );
     }
