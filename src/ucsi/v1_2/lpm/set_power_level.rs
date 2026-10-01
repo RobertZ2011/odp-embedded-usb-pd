@@ -1,5 +1,6 @@
 //! Types for SET_POWER_LEVEL command, see UCSI spec 6.5.19
 
+use bincode::error::EncodeError;
 use bitfield::bitfield;
 use bytemuck::{Pod, Zeroable};
 
@@ -70,7 +71,7 @@ pub enum Current {
     Current(type_c::Current),
 }
 
-/// Type-C decode error, contains the invalid value
+/// Type-C current decode error, contains the invalid value
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InvalidCurrent(pub u8);
@@ -152,8 +153,10 @@ impl TryFrom<ArgBitsRaw<[u8; ARG_BITS_LEN]>> for Args {
     }
 }
 
-impl From<Args> for ArgBitsRaw<[u8; ARG_BITS_LEN]> {
-    fn from(args: Args) -> Self {
+impl TryFrom<Args> for ArgBitsRaw<[u8; ARG_BITS_LEN]> {
+    type Error = OverflowError;
+
+    fn try_from(args: Args) -> Result<Self, Self::Error> {
         let (power_unit, voltage_unit) = if args.lsb_control {
             (MW1000_UNIT, MV25_UNIT)
         } else {
@@ -164,11 +167,49 @@ impl From<Args> for ArgBitsRaw<[u8; ARG_BITS_LEN]> {
         raw.set_connector_number(args.connector_number);
         raw.set_power_role(args.power_role == PowerRole::Source);
         raw.set_lsb_control(args.lsb_control);
-        raw.set_max_power((args.max_power / power_unit) as u8);
+
+        let max_power = args.max_power / power_unit;
+        if max_power > u8::MAX as u32 {
+            return Err(OverflowError::MaxPowerOverflow(args.max_power));
+        }
+        raw.set_max_power(max_power as u8);
+
         raw.set_type_c_current(args.type_c_current.into());
-        raw.set_operating_current((args.operating_current / MA50_UNIT) as u8);
-        raw.set_output_voltage((args.output_voltage / u32::from(voltage_unit)) as u16);
-        raw
+        let operating_current = args.operating_current / MA50_UNIT;
+        if operating_current > u8::MAX as u16 {
+            return Err(OverflowError::OperatingCurrentOverflow(args.operating_current));
+        }
+        raw.set_operating_current(operating_current as u8);
+
+        let output_voltage = args.output_voltage / u32::from(voltage_unit);
+        if output_voltage > u16::MAX as u32 {
+            return Err(OverflowError::OutputVoltageOverflow(args.output_voltage));
+        }
+        raw.set_output_voltage(output_voltage as u16);
+        Ok(raw)
+    }
+}
+
+/// Error type for [`Args`] conversion failures
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OverflowError {
+    /// The max power value cannot fit in 8 bits
+    MaxPowerOverflow(u32),
+    /// The operating current value cannot fit in 8 bits
+    OperatingCurrentOverflow(u16),
+    /// The output voltage value cannot fit in 16 bits
+    OutputVoltageOverflow(u32),
+}
+
+// TODO: temporary, remove this once we fully move away from bincode
+impl From<OverflowError> for EncodeError {
+    fn from(val: OverflowError) -> Self {
+        match val {
+            OverflowError::MaxPowerOverflow(_) => EncodeError::Other("Max power overflow"),
+            OverflowError::OperatingCurrentOverflow(_) => EncodeError::Other("Operating current overflow"),
+            OverflowError::OutputVoltageOverflow(_) => EncodeError::Other("Output voltage overflow"),
+        }
     }
 }
 
@@ -192,11 +233,13 @@ impl defmt::Format for ArgsRaw {
     }
 }
 
-impl From<Args> for ArgsRaw {
-    fn from(args: Args) -> Self {
-        Self {
-            bits: ArgBitsRaw::from(args).0,
-        }
+impl TryFrom<Args> for ArgsRaw {
+    type Error = OverflowError;
+
+    fn try_from(args: Args) -> Result<Self, Self::Error> {
+        Ok(Self {
+            bits: ArgBitsRaw::try_from(args)?.0,
+        })
     }
 }
 
@@ -249,7 +292,7 @@ mod test {
         };
 
         assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
-        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(expected).unwrap());
         assert_eq!(bytes, encoded);
     }
 
@@ -269,7 +312,7 @@ mod test {
         };
 
         assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
-        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(expected).unwrap());
         assert_eq!(bytes, encoded);
     }
 
@@ -290,7 +333,7 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(Args::try_from(ArgsRaw::from(args)), Ok(expected));
+        assert_eq!(Args::try_from(ArgsRaw::try_from(args).unwrap()), Ok(expected));
     }
 
     #[test]
@@ -300,6 +343,45 @@ mod test {
         assert_eq!(
             Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)),
             Err(InvalidCurrent(0x04))
+        );
+    }
+
+    #[test]
+    fn test_args_raw_invalid_max_power() {
+        // Connector 0, max_power overflow
+        let args = Args {
+            // 256 * 500 mW
+            max_power: 128000,
+            ..Default::default()
+        };
+        assert_eq!(ArgsRaw::try_from(args), Err(OverflowError::MaxPowerOverflow(128000)));
+    }
+
+    #[test]
+    fn test_args_raw_invalid_operating_current() {
+        // Connector 0, operating_current overflow
+        let args = Args {
+            // 256 * 50 mA
+            operating_current: 12800,
+            ..Default::default()
+        };
+        assert_eq!(
+            ArgsRaw::try_from(args),
+            Err(OverflowError::OperatingCurrentOverflow(12800))
+        );
+    }
+
+    #[test]
+    fn test_args_raw_invalid_output_voltage() {
+        // Connector 0, output_voltage overflow
+        let args = Args {
+            // 65535 * 20 mV
+            output_voltage: 1310720,
+            ..Default::default()
+        };
+        assert_eq!(
+            ArgsRaw::try_from(args),
+            Err(OverflowError::OutputVoltageOverflow(1310720))
         );
     }
 }

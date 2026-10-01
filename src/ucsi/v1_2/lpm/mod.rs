@@ -155,8 +155,8 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::SetPowerLevel(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                let bytes: [u8; set_power_level::ArgsRaw::LEN] =
-                    bytemuck::must_cast(set_power_level::ArgsRaw::from(args));
+                let args = set_power_level::ArgsRaw::try_from(args).map_err(EncodeError::from)?;
+                let bytes: [u8; set_power_level::ArgsRaw::LEN] = bytemuck::must_cast(args);
                 bytes.encode(encoder)
             }
             CommandData::SetNewCam(args) => {
