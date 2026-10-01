@@ -111,7 +111,7 @@ impl<T: PortId> Command<T> {
                 args.connector_number = self.port.into();
             }
             CommandData::GetPdMessage(ref mut args) => {
-                args.set_connector_number(self.port.into());
+                args.connector_number = self.port.into();
             }
             _ => {}
         }
@@ -211,7 +211,9 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::GetPdMessage(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                args.encode(encoder)
+                let bytes: [u8; get_pd_message::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_pd_message::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
         }
     }
@@ -356,9 +358,11 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::GetPdMessage => {
                 // The connector number is combined with arguments, let it handle everything
-                let args = get_pd_message::Args::decode(decoder)?;
+                let bytes = <[u8; get_pd_message::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = get_pd_message::Args::try_from(bytemuck::must_cast::<_, get_pd_message::ArgsRaw>(bytes))
+                    .map_err(DecodeError::from)?;
                 Ok(Command {
-                    port: From::from(args.connector_number()),
+                    port: From::from(args.connector_number),
                     operation: CommandData::GetPdMessage(args),
                 })
             }
@@ -419,7 +423,11 @@ impl Encode for ResponseData {
                 bytes.iter().take(len).try_for_each(|byte| byte.encode(encoder))
             }
             ResponseData::GetCableProperty(data) => data.encode(encoder),
-            ResponseData::GetPdMessage(data) => data.encode(encoder),
+            ResponseData::GetPdMessage(data) => {
+                let bytes: [u8; get_pd_message::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_pd_message::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
         }
     }
 }
@@ -458,9 +466,12 @@ impl Decode<CommandType> for ResponseData {
             CommandType::GetCableProperty => Ok(ResponseData::GetCableProperty(
                 get_cable_property::ResponseData::decode(decoder)?,
             )),
-            CommandType::GetPdMessage => Ok(ResponseData::GetPdMessage(get_pd_message::ResponseData::decode(
-                decoder,
-            )?)),
+            CommandType::GetPdMessage => {
+                let bytes = <[u8; get_pd_message::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetPdMessage(
+                    bytemuck::must_cast::<_, get_pd_message::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             command_type => Err(DecodeError::UnexpectedVariant {
                 type_name: "CommandType",
                 allowed: &AllowedEnumVariants::Allowed(&[CommandType::GetConnectorStatus as u32]),
@@ -577,6 +588,31 @@ impl From<get_pdos::InvalidSourceCapabilityType> for DecodeError {
                 get_pdos::SourceCapabilityType::Advertised as u32,
                 get_pdos::SourceCapabilityType::Maximum as u32,
             ]),
+        }
+    }
+}
+
+impl From<get_pd_message::InvalidMessageType> for DecodeError {
+    fn from(value: get_pd_message::InvalidMessageType) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "MessageType",
+            allowed: &AllowedEnumVariants::Allowed(&[
+                get_pd_message::MessageType::SinkCapExtended as u32,
+                get_pd_message::MessageType::SourceCapExtended as u32,
+                get_pd_message::MessageType::BatteryCap as u32,
+                get_pd_message::MessageType::BatteryStatus as u32,
+                get_pd_message::MessageType::DiscoverIdentity as u32,
+            ]),
+            found: value.0 as u32,
+        }
+    }
+}
+
+impl From<get_pd_message::InvalidArgs> for DecodeError {
+    fn from(value: get_pd_message::InvalidArgs) -> Self {
+        match value {
+            get_pd_message::InvalidArgs::InvalidRecipient(err) => err.into(),
+            get_pd_message::InvalidArgs::InvalidMessageType(err) => err.into(),
         }
     }
 }
@@ -989,15 +1025,75 @@ mod tests {
             get_pd_message,
             GlobalCommand {
                 port: GlobalPortId(3),
-                operation: CommandData::GetPdMessage(
-                    *get_pd_message::Args::default()
-                        .set_connector_number(3)
-                        .set_recipient(Recipient::Sop)
-                        .set_message_offset(2)
-                        .set_num_bytes(1)
-                        .set_message_type(get_pd_message::MessageType::BatteryCap)
-                ),
+                operation: CommandData::GetPdMessage(get_pd_message::Args {
+                    connector_number: 3,
+                    recipient: Recipient::Sop,
+                    message_offset: 2,
+                    num_bytes: 1,
+                    message_type: get_pd_message::MessageType::BatteryCap,
+                }),
             }
         );
+    }
+
+    #[test]
+    fn test_decode_get_pd_message_invalid_recipient() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::GetPdMessage as u8;
+        bytes[2] = 0x83;
+        bytes[3] = 0x0B; // Recipient 0x7, bits 9:7 cross the byte boundary
+        bytes[4] = 0x01;
+        bytes[5] = 0x02;
+
+        let Err(DecodeError::UnexpectedVariant {
+            type_name,
+            allowed,
+            found,
+        }) = decode_from_slice::<GlobalCommand, _>(&bytes, standard().with_fixed_int_encoding())
+        else {
+            panic!("Expected UnexpectedVariant error");
+        };
+        assert_eq!(type_name, "Recipient");
+        assert_eq!(
+            *allowed,
+            AllowedEnumVariants::Allowed(&[
+                Recipient::Connector as u32,
+                Recipient::Sop as u32,
+                Recipient::SopP as u32,
+                Recipient::SopPp as u32,
+            ])
+        );
+        assert_eq!(found, 0x7);
+    }
+
+    #[test]
+    fn test_decode_get_pd_message_invalid_message_type() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::GetPdMessage as u8;
+        bytes[2] = 0x83;
+        bytes[3] = 0x38;
+        bytes[4] = 0x01;
+        bytes[5] = 0x0f; // Invalid message type
+
+        let Err(DecodeError::UnexpectedVariant {
+            type_name,
+            allowed,
+            found,
+        }) = decode_from_slice::<GlobalCommand, _>(&bytes, standard().with_fixed_int_encoding())
+        else {
+            panic!("Expected UnexpectedVariant error");
+        };
+        assert_eq!(type_name, "MessageType");
+        assert_eq!(
+            *allowed,
+            AllowedEnumVariants::Allowed(&[
+                get_pd_message::MessageType::SinkCapExtended as u32,
+                get_pd_message::MessageType::SourceCapExtended as u32,
+                get_pd_message::MessageType::BatteryCap as u32,
+                get_pd_message::MessageType::BatteryStatus as u32,
+                get_pd_message::MessageType::DiscoverIdentity as u32,
+            ])
+        );
+        assert_eq!(found, 0x0f);
     }
 }
