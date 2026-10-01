@@ -1,24 +1,22 @@
 //! Types for GET_PDOs command, see UCSI spec 6.5.15
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
-use bincode::{Decode, Encode};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
+use pack1::U32LE;
 
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 use crate::PowerRole;
 
 /// Command padding
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgsRaw>();
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgBitsRaw>();
 /// Max response data length, supports up to 4 PDOs
 pub const RESPONSE_DATA_LEN: usize = MAX_PDOS * 4;
 /// Maximum number of PDOs supported
 pub const MAX_PDOS: usize = 4;
 
 bitfield! {
-    /// Raw arguments
+    /// Raw argument bits
     #[derive(Copy, Clone, Default, PartialEq, Eq)]
-    pub(super) struct ArgsRaw(u32);
+    pub struct ArgBitsRaw(u32);
     impl Debug;
 
     /// Connector number
@@ -27,7 +25,7 @@ bitfield! {
     pub bool, partner, set_partner: 7;
     /// PDO offset,
     pub u8, pdo_offset, set_pdo_offset: 15, 8;
-    /// Number of PDOs
+    /// Number of PDOs, minus one
     pub u8, num_pdos, set_num_pdos: 17, 16;
     /// Source or sink PDOs?
     pub bool, source, set_source: 18;
@@ -36,11 +34,11 @@ bitfield! {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ArgsRaw {
+impl defmt::Format for ArgBitsRaw {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "ArgsRaw {{ .0: {}, connector_number: {}, partner: {}, pdo_offset: {}, num_pdos: {}, source: {}, source_capability_type: {} }}",
+            "ArgBitsRaw {{ .0: {}, connector_number: {}, partner: {}, pdo_offset: {}, num_pdos: {}, source: {}, source_capability_type: {} }}",
             self.0,
             self.connector_number(),
             self.partner(),
@@ -93,109 +91,81 @@ impl From<SourceCapabilityType> for u8 {
     }
 }
 
-impl From<InvalidSourceCapabilityType> for DecodeError {
-    fn from(value: InvalidSourceCapabilityType) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "SourceCapabilityType",
-            found: value.0 as u32,
-            allowed: &AllowedEnumVariants::Allowed(&[
-                SourceCapabilityType::Current as u32,
-                SourceCapabilityType::Advertised as u32,
-                SourceCapabilityType::Maximum as u32,
-            ]),
-        }
-    }
-}
+/// Invalid number of PDOs error, contains the out of range value
+///
+/// The number of PDOs must be in the range `1..=MAX_PDOS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InvalidNumPdos(pub u8);
 
 /// Command arguments
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args(ArgsRaw);
+pub struct Args {
+    /// Connector number
+    pub connector_number: u8,
+    /// Retrieve the partner's PDOs instead of the connector's
+    pub partner: bool,
+    /// PDO offset
+    pub pdo_offset: u8,
+    /// Number of PDOs to retrieve, must be in the range `1..=MAX_PDOS`
+    pub num_pdos: u8,
+    /// Retrieve source or sink PDOs
+    pub role: PowerRole,
+    /// Source capability type
+    pub source_capability_type: SourceCapabilityType,
+}
 
-impl Args {
-    pub fn connector_number(&self) -> u8 {
-        self.0.connector_number()
-    }
-
-    pub fn set_connector_number(&mut self, connector_number: u8) -> &mut Self {
-        self.0.set_connector_number(connector_number);
-        self
-    }
-
-    pub fn partner(&self) -> bool {
-        self.0.partner()
-    }
-
-    pub fn set_partner(&mut self, partner: bool) -> &mut Self {
-        self.0.set_partner(partner);
-        self
-    }
-
-    pub fn pdo_offset(&self) -> u8 {
-        self.0.pdo_offset()
-    }
-
-    pub fn set_pdo_offset(&mut self, pdo_offset: u8) -> &mut Self {
-        self.0.set_pdo_offset(pdo_offset);
-        self
-    }
-
-    pub fn num_pdos(&self) -> u8 {
-        // +1 as per UCSI spec
-        self.0.num_pdos() + 1
-    }
-
-    /// Sets the number of PDOs to retrieve, must be in range 1..=MAX_PDOS
-    ///
-    /// Returns `None` if the value is out of range
-    pub fn set_num_pdos(&mut self, num_pdos: u8) -> Option<&mut Self> {
-        if num_pdos == 0 || num_pdos > MAX_PDOS as u8 {
-            return None;
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            connector_number: 0,
+            partner: false,
+            pdo_offset: 0,
+            num_pdos: 1,
+            role: PowerRole::default(),
+            source_capability_type: SourceCapabilityType::default(),
         }
-
-        // -1 as per UCSI spec
-        self.0.set_num_pdos(num_pdos - 1);
-        Some(self)
-    }
-
-    pub fn role(&self) -> PowerRole {
-        if self.0.source() {
-            PowerRole::Source
-        } else {
-            PowerRole::Sink
-        }
-    }
-
-    pub fn set_role(&mut self, pdo_type: PowerRole) -> &mut Self {
-        self.0.set_source(pdo_type == PowerRole::Source);
-        self
-    }
-
-    pub fn source_capability_type(&self) -> SourceCapabilityType {
-        // Panic Safety: ArgsRaw::source_capability_type is guaranteed to be a valid and defined value of SourceCapabilityType:
-        // 1. Args::set_source_capability_type only accepts SourceCapabilityType values
-        // 2. ArgsRaw::set_source_capability is only set with values from u8::from(SourceCapabilityType)
-        // 3. SourceCapabilityType::try_from(u8) only fails for undefined values and is unit tested with all defined values to roundtrip correctly
-        // 4. The only way to construct an Args is through Args::try_from(u32), which validates SourceCapabilityType::try_from(u8)
-        #[allow(clippy::unwrap_used)]
-        self.0.source_capability_type().try_into().unwrap()
-    }
-
-    // NOTE: Self::source_capability_type has a SAFETY requirement on argument being `SourceCapabilityType` and only setting with values
-    // returned from `impl From<SourceCapabilityType> for u8`
-    pub fn set_source_capability_type(&mut self, source_capabilities_type: SourceCapabilityType) -> &mut Self {
-        self.0.set_source_capability_type(source_capabilities_type.into());
-        self
     }
 }
 
-impl TryFrom<ArgsRaw> for Args {
+impl TryFrom<ArgBitsRaw> for Args {
     type Error = InvalidSourceCapabilityType;
 
-    fn try_from(value: ArgsRaw) -> Result<Self, Self::Error> {
-        // Validate source capability type
-        let _: SourceCapabilityType = value.source_capability_type().try_into()?;
-        Ok(Self(value))
+    fn try_from(raw: ArgBitsRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            connector_number: raw.connector_number(),
+            partner: raw.partner(),
+            pdo_offset: raw.pdo_offset(),
+            // +1 as per UCSI spec
+            num_pdos: raw.num_pdos() + 1,
+            role: if raw.source() {
+                PowerRole::Source
+            } else {
+                PowerRole::Sink
+            },
+            source_capability_type: raw.source_capability_type().try_into()?,
+        })
+    }
+}
+
+impl TryFrom<Args> for ArgBitsRaw {
+    type Error = InvalidNumPdos;
+
+    fn try_from(args: Args) -> Result<Self, Self::Error> {
+        if args.num_pdos == 0 || args.num_pdos > MAX_PDOS as u8 {
+            return Err(InvalidNumPdos(args.num_pdos));
+        }
+
+        let mut raw = ArgBitsRaw(0);
+        raw.set_connector_number(args.connector_number);
+        raw.set_partner(args.partner);
+        raw.set_pdo_offset(args.pdo_offset);
+        // -1 as per UCSI spec
+        raw.set_num_pdos(args.num_pdos - 1);
+        raw.set_source(args.role == PowerRole::Source);
+        raw.set_source_capability_type(args.source_capability_type.into());
+        Ok(raw)
     }
 }
 
@@ -203,24 +173,48 @@ impl TryFrom<u32> for Args {
     type Error = InvalidSourceCapabilityType;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        ArgsRaw(value).try_into()
+        ArgBitsRaw(value).try_into()
     }
 }
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.0 .0.encode(encoder)?;
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+/// Raw wire format of [`Args`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ArgsRaw {
+    /// Argument bits, see [`ArgBitsRaw`]
+    pub bits: U32LE,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ArgsRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ArgsRaw {{ bits: {} }}", ArgBitsRaw(self.bits.get()))
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u32::decode(decoder)?;
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Args::try_from(raw).map_err(Into::into)
+impl TryFrom<Args> for ArgsRaw {
+    type Error = InvalidNumPdos;
+
+    fn try_from(args: Args) -> Result<Self, Self::Error> {
+        Ok(Self {
+            bits: U32LE::new(ArgBitsRaw::try_from(args)?.0),
+            ..Default::default()
+        })
+    }
+}
+
+impl TryFrom<ArgsRaw> for Args {
+    type Error = InvalidSourceCapabilityType;
+
+    fn try_from(raw: ArgsRaw) -> Result<Self, Self::Error> {
+        raw.bits.get().try_into()
     }
 }
 
@@ -228,115 +222,151 @@ impl<Context> Decode<Context> for Args {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResponseData {
-    raw: [u32; MAX_PDOS],
+    /// Raw PDOs, the first zero PDO terminates the list
+    pub pdos: [u32; MAX_PDOS],
 }
 
 impl ResponseData {
     /// Iterator over valid PDOs
     pub fn iter(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
         // NOTE: If this changes the panic safety comment below should be revisited
-        let last_pdo = self.raw.iter().position(|&pdo| pdo == 0).unwrap_or(self.raw.len());
+        let last_pdo = self.pdos.iter().position(|&pdo| pdo == 0).unwrap_or(self.pdos.len());
         // Panic safety: `last_pdo` will always be in bounds
         #[allow(clippy::indexing_slicing)]
-        self.raw.as_slice()[..last_pdo].iter().copied()
+        self.pdos.as_slice()[..last_pdo].iter().copied()
     }
 
     /// Mutable iterator over valid PDOs
     pub fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = &mut u32> + '_ {
         // NOTE: If this changes the panic safety comment below should be revisited
-        let last_pdo = self.raw.iter().position(|&pdo| pdo == 0).unwrap_or(self.raw.len());
+        let last_pdo = self.pdos.iter().position(|&pdo| pdo == 0).unwrap_or(self.pdos.len());
         // Panic safety: `last_pdo` will always be in bounds
         #[allow(clippy::indexing_slicing)]
-        self.raw.as_mut_slice()[..last_pdo].iter_mut()
+        self.pdos.as_mut_slice()[..last_pdo].iter_mut()
     }
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        for pdo in self.raw.iter() {
-            if *pdo == 0 {
-                break;
-            }
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ResponseDataRaw {
+    /// Raw PDOs
+    pub pdos: [U32LE; MAX_PDOS],
+}
 
-            pdo.encode(encoder)?;
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ResponseDataRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ResponseDataRaw {{ pdos: {} }}", self.pdos.map(U32LE::get))
+    }
+}
+
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        Self {
+            pdos: data.pdos.map(U32LE::new),
         }
-        Ok(())
     }
 }
 
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        <[u32; MAX_PDOS]>::decode(decoder).map(|v| ResponseData { raw: v })
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        Self {
+            pdos: raw.pdos.map(U32LE::get),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
 
     #[test]
-    fn test_encode_response_data() {
-        let bytes: [u8; RESPONSE_DATA_LEN] = [
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
+
+    #[test]
+    fn test_response_data_raw_roundtrip() {
+        let bytes: [u8; ResponseDataRaw::LEN] = [
             0x12, 0x00, 0x00, 0x00, 0x34, 0x00, 0x00, 0x00, 0x56, 0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00,
         ];
         let expected = ResponseData {
-            raw: [0x12, 0x34, 0x56, 0x78],
+            pdos: [0x12, 0x34, 0x56, 0x78],
         };
-        let (data, len): (ResponseData, _) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).expect("Decoding failed");
-        assert_eq!(data, expected);
-        assert_eq!(len, RESPONSE_DATA_LEN);
-    }
 
-    #[test]
-    fn test_decode_args() {
-        // Partner, connector 3, 1 PDO, source, maximum capabilities, offset 4
-        let encoded: [u8; 6] = [0x83, 0x04, 0x14, 0x00, 0x00, 0x00];
-        let (decoded, size): (Args, usize) = decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(size, 6);
-
-        let expected = *Args::default()
-            .set_connector_number(3)
-            .set_partner(true)
-            .set_pdo_offset(4)
-            .set_num_pdos(1)
-            .unwrap()
-            .set_role(PowerRole::Source)
-            .set_source_capability_type(SourceCapabilityType::Maximum);
-        assert_eq!(decoded, expected);
-    }
-
-    #[test]
-    fn test_decode_args_invalid_source_capability_type() {
-        // Partner, connector 3, 1 PDO, source, invalid source-capability-type (0x3), offset 4
-        let encoded: [u8; 6] = [0x83, 0x04, 0x1C, 0x00, 0x00, 0x00];
-        let Err(bincode::error::DecodeError::UnexpectedVariant {
-            type_name,
-            allowed,
-            found,
-        }): Result<(Args, usize), _> = decode_from_slice(&encoded, standard().with_fixed_int_encoding())
-        else {
-            panic!("Expected UnexpectedVariant error");
-        };
-        assert_eq!(type_name, "SourceCapabilityType");
         assert_eq!(
-            *allowed,
-            bincode::error::AllowedEnumVariants::Allowed(&[
-                SourceCapabilityType::Current as u32,
-                SourceCapabilityType::Advertised as u32,
-                SourceCapabilityType::Maximum as u32,
-            ])
+            ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(bytes)),
+            expected
         );
-        assert_eq!(found, 0x03);
+        let encoded: [u8; ResponseDataRaw::LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(encoded, bytes);
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        // Partner, connector 3, 1 PDO, source, maximum capabilities, offset 4
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x04, 0x14, 0x00, 0x00, 0x00];
+        let expected = Args {
+            connector_number: 3,
+            partner: true,
+            pdo_offset: 4,
+            num_pdos: 1,
+            role: PowerRole::Source,
+            source_capability_type: SourceCapabilityType::Maximum,
+        };
+
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(expected).unwrap());
+        assert_eq!(bytes, encoded);
+    }
+
+    #[test]
+    fn test_args_raw_max_num_pdos() {
+        // Sink, connector 1, 4 PDOs
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0x00, 0x03, 0x00, 0x00, 0x00];
+        let expected = Args {
+            connector_number: 1,
+            num_pdos: MAX_PDOS as u8,
+            ..Default::default()
+        };
+
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(expected).unwrap());
+        assert_eq!(bytes, encoded);
+    }
+
+    #[test]
+    fn test_args_raw_invalid_num_pdos() {
+        for num_pdos in [0, MAX_PDOS as u8 + 1, u8::MAX] {
+            let args = Args {
+                num_pdos,
+                ..Default::default()
+            };
+            assert_eq!(ArgsRaw::try_from(args), Err(InvalidNumPdos(num_pdos)));
+        }
+    }
+
+    #[test]
+    fn test_args_raw_invalid_source_capability_type() {
+        // Partner, connector 3, 1 PDO, source, invalid source-capability-type (0x3), offset 4
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x04, 0x1C, 0x00, 0x00, 0x00];
+        assert_eq!(
+            Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)),
+            Err(InvalidSourceCapabilityType(0x03))
+        );
     }
 
     #[test]
     fn test_response_iterator() {
         let response = ResponseData {
-            raw: [0x12, 0x34, 0x56, 0x00],
+            pdos: [0x12, 0x34, 0x56, 0x00],
         };
         let mut iter = response.iter();
         assert_eq!(iter.len(), 3);
@@ -352,7 +382,7 @@ mod test {
 
     #[test]
     fn test_response_iterator_empty() {
-        let response = ResponseData { raw: [0x00; MAX_PDOS] };
+        let response = ResponseData { pdos: [0x00; MAX_PDOS] };
         let mut iter = response.iter();
         assert_eq!(iter.len(), 0);
         assert_eq!(iter.next(), None);
@@ -362,7 +392,7 @@ mod test {
     #[test]
     fn test_response_iterator_full() {
         let response = ResponseData {
-            raw: [0x12, 0x34, 0x56, 0x78],
+            pdos: [0x12, 0x34, 0x56, 0x78],
         };
         let mut iter = response.iter();
         assert_eq!(iter.len(), 4);

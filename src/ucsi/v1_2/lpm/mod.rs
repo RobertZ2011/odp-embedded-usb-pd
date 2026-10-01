@@ -108,7 +108,7 @@ impl<T: PortId> Command<T> {
                 args.connector_number = self.port.into();
             }
             CommandData::GetPdos(ref mut args) => {
-                args.set_connector_number(self.port.into());
+                args.connector_number = self.port.into();
             }
             CommandData::GetPdMessage(ref mut args) => {
                 args.set_connector_number(self.port.into());
@@ -200,7 +200,10 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::GetPdos(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                args.encode(encoder)
+                let raw = get_pdos::ArgsRaw::try_from(args)
+                    .map_err(|_| EncodeError::Other("GET_PDOS number of PDOs out of range"))?;
+                let bytes: [u8; get_pdos::ArgsRaw::LEN] = bytemuck::must_cast(raw);
+                bytes.encode(encoder)
             }
             CommandData::GetCableProperty => {
                 raw_port.encode(encoder)?;
@@ -334,9 +337,11 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::GetPdos => {
                 // The connector number is combined with arguments, let it handle everything
-                let args = get_pdos::Args::decode(decoder)?;
+                let bytes = <[u8; get_pdos::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = get_pdos::Args::try_from(bytemuck::must_cast::<_, get_pdos::ArgsRaw>(bytes))
+                    .map_err(DecodeError::from)?;
                 Ok(Command {
-                    port: From::from(args.connector_number()),
+                    port: From::from(args.connector_number),
                     operation: CommandData::GetPdos(args),
                 })
             }
@@ -406,7 +411,13 @@ impl Encode for ResponseData {
             }
             ResponseData::GetCamSupported(data) => data.encode(encoder),
             ResponseData::GetCurrentCam(data) => data.encode(encoder),
-            ResponseData::GetPdos(data) => data.encode(encoder),
+            ResponseData::GetPdos(data) => {
+                // Only the valid PDOs are sent, the response is shorter than the raw type when fewer are present
+                let bytes: [u8; get_pdos::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_pdos::ResponseDataRaw::from(*data));
+                let len = data.iter().len() * size_of::<u32>();
+                bytes.iter().take(len).try_for_each(|byte| byte.encode(encoder))
+            }
             ResponseData::GetCableProperty(data) => data.encode(encoder),
             ResponseData::GetPdMessage(data) => data.encode(encoder),
         }
@@ -438,7 +449,12 @@ impl Decode<CommandType> for ResponseData {
             CommandType::GetCurrentCam => Ok(ResponseData::GetCurrentCam(get_current_cam::ResponseData::decode(
                 decoder,
             )?)),
-            CommandType::GetPdos => Ok(ResponseData::GetPdos(get_pdos::ResponseData::decode(decoder)?)),
+            CommandType::GetPdos => {
+                let bytes = <[u8; get_pdos::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetPdos(
+                    bytemuck::must_cast::<_, get_pdos::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             CommandType::GetCableProperty => Ok(ResponseData::GetCableProperty(
                 get_cable_property::ResponseData::decode(decoder)?,
             )),
@@ -547,6 +563,20 @@ impl From<InvalidRecipient> for DecodeError {
                 Recipient::SopPp as u32,
             ]),
             found: value.0 as u32,
+        }
+    }
+}
+
+impl From<get_pdos::InvalidSourceCapabilityType> for DecodeError {
+    fn from(value: get_pdos::InvalidSourceCapabilityType) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "SourceCapabilityType",
+            found: value.0 as u32,
+            allowed: &AllowedEnumVariants::Allowed(&[
+                get_pdos::SourceCapabilityType::Current as u32,
+                get_pdos::SourceCapabilityType::Advertised as u32,
+                get_pdos::SourceCapabilityType::Maximum as u32,
+            ]),
         }
     }
 }
@@ -860,9 +890,69 @@ mod tests {
             get_pdos,
             GlobalCommand {
                 port: GlobalPortId(1),
-                operation: CommandData::GetPdos(*get_pdos::Args::default().set_connector_number(1).set_partner(true)),
+                operation: CommandData::GetPdos(get_pdos::Args {
+                    connector_number: 1,
+                    partner: true,
+                    ..Default::default()
+                }),
             }
         );
+    }
+
+    #[test]
+    fn test_decode_get_pdos_invalid_source_capability_type() {
+        let mut bytes = [0u8; COMMAND_LEN];
+        bytes[0] = CommandType::GetPdos as u8;
+        bytes[2] = 0x1;
+        bytes[4] = 0x18; // Source capability type 0x3, bits 20:19
+
+        let Err(DecodeError::UnexpectedVariant {
+            type_name,
+            allowed,
+            found,
+        }) = decode_from_slice::<GlobalCommand, _>(&bytes, standard().with_fixed_int_encoding())
+        else {
+            panic!("Expected UnexpectedVariant error");
+        };
+        assert_eq!(type_name, "SourceCapabilityType");
+        assert_eq!(
+            *allowed,
+            AllowedEnumVariants::Allowed(&[
+                get_pdos::SourceCapabilityType::Current as u32,
+                get_pdos::SourceCapabilityType::Advertised as u32,
+                get_pdos::SourceCapabilityType::Maximum as u32,
+            ])
+        );
+        assert_eq!(found, 0x3);
+    }
+
+    #[test]
+    fn test_encode_get_pdos_invalid_num_pdos() {
+        let command = GlobalCommand {
+            port: GlobalPortId(1),
+            operation: CommandData::GetPdos(get_pdos::Args {
+                num_pdos: 0,
+                ..Default::default()
+            }),
+        };
+
+        let mut bytes = [0u8; COMMAND_LEN];
+        assert!(matches!(
+            bincode::encode_into_slice(command, &mut bytes, standard().with_fixed_int_encoding()),
+            Err(EncodeError::Other(_))
+        ));
+    }
+
+    #[test]
+    fn test_encode_get_pdos_response_variable_length() {
+        let response = ResponseData::GetPdos(get_pdos::ResponseData {
+            pdos: [0x11223344, 0x55667788, 0, 0],
+        });
+
+        let mut bytes = [0u8; get_pdos::ResponseDataRaw::LEN];
+        let len = bincode::encode_into_slice(response, &mut bytes, standard().with_fixed_int_encoding()).unwrap();
+        assert_eq!(len, 2 * size_of::<u32>());
+        assert_eq!(bytes[..len], [0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55]);
     }
 
     #[test]
