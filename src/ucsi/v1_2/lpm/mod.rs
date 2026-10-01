@@ -102,7 +102,7 @@ impl<T: PortId> Command<T> {
                 args.connector_number = self.port.into();
             }
             CommandData::SetPdr(ref mut args) => {
-                args.set_connector_number(self.port.into());
+                args.connector_number = self.port.into();
             }
             CommandData::GetAlternateModes(ref mut args) => {
                 args.set_connector_number(self.port.into());
@@ -177,7 +177,8 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::SetPdr(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                args.encode(encoder)
+                let bytes: [u8; set_pdr::ArgsRaw::LEN] = bytemuck::must_cast(set_pdr::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
             CommandData::GetAlternateModes(args) => {
                 // This command has a different format without a leading port number
@@ -283,9 +284,10 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::SetPdr => {
                 // The connector number is combined with arguments, let it handle everything
-                let args = set_pdr::Args::decode(decoder)?;
+                let bytes = <[u8; set_pdr::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = set_pdr::Args::from(bytemuck::must_cast::<_, set_pdr::ArgsRaw>(bytes));
                 Ok(Command {
-                    port: From::from(args.connector_number()),
+                    port: From::from(args.connector_number),
                     operation: CommandData::SetPdr(args),
                 })
             }
@@ -715,7 +717,11 @@ mod tests {
             set_pdr,
             GlobalCommand {
                 port: GlobalPortId(1),
-                operation: CommandData::SetPdr(*set_pdr::Args::default().set_connector_number(1).set_swap_source(true)),
+                operation: CommandData::SetPdr(set_pdr::Args {
+                    connector_number: 1,
+                    swap_source: true,
+                    ..Default::default()
+                }),
             }
         );
     }
