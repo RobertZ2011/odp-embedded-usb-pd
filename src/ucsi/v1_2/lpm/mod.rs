@@ -159,7 +159,8 @@ impl<T: PortId> Encode for Command<T> {
             }
             CommandData::SetNewCam(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
-                args.encode(encoder)
+                let bytes: [u8; set_new_cam::ArgsRaw::LEN] = bytemuck::must_cast(set_new_cam::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
             CommandData::GetErrorStatus => {
                 raw_port.encode(encoder)?;
@@ -249,7 +250,8 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
             }
             CommandType::SetNewCam => {
                 // The connector number is combined with arguments, let it handle everything
-                let args = set_new_cam::Args::decode(decoder)?;
+                let bytes = <[u8; set_new_cam::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = set_new_cam::Args::from(bytemuck::must_cast::<_, set_new_cam::ArgsRaw>(bytes));
                 Ok(Command {
                     port: From::from(args.connector_number),
                     operation: CommandData::SetNewCam(args),
