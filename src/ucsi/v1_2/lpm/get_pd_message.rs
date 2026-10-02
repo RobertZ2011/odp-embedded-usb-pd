@@ -1,10 +1,8 @@
 //! Types for GET_PD_MESSAGE command, see UCSI spec 4.5.20
 
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
+use pack1::U32LE;
 
 use crate::ucsi::v1_2::lpm::{InvalidRecipient, Recipient};
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
@@ -12,17 +10,17 @@ use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 /// Data length for the GET_PD_MESSAGE command response
 pub const RESPONSE_DATA_LEN: usize = 16;
 /// Command padding
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgsRaw>();
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgBitsRaw>();
 
 bitfield! {
-    /// Raw arguments
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(super) struct ArgsRaw(u32);
+    /// Raw argument bits
+    #[derive(Copy, Clone, Default, PartialEq, Eq)]
+    pub struct ArgBitsRaw(u32);
     impl Debug;
 
     /// Connector number
     pub u8, connector_number, set_connector_number: 6, 0;
-    /// Recipient
+    /// Recipient, crosses the boundary between the first and second bytes
     pub u8, recipient, set_recipient: 9, 7;
     /// Message offset
     pub u8, message_offset, set_message_offset: 15, 10;
@@ -33,11 +31,11 @@ bitfield! {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ArgsRaw {
+impl defmt::Format for ArgBitsRaw {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "ArgsRaw {{ .0: {}, recipient: {}, connector_number: {}, message_offset: {}, num_bytes: {}, message_type: {} }}",
+            "ArgBitsRaw {{ .0: {}, recipient: {}, connector_number: {}, message_offset: {}, num_bytes: {}, message_type: {} }}",
             self.0,
             self.recipient(),
             self.connector_number(),
@@ -99,66 +97,28 @@ impl From<MessageType> for u8 {
 /// Command arguments
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args(ArgsRaw);
+pub struct Args {
+    /// Connector number
+    pub connector_number: u8,
+    /// Recipient
+    pub recipient: Recipient,
+    /// Message offset
+    pub message_offset: u8,
+    /// Number of bytes
+    pub num_bytes: u8,
+    /// Message type
+    pub message_type: MessageType,
+}
 
-impl Args {
-    pub fn recipient(&self) -> Recipient {
-        // Panic Safety: ArgsRaw::recipient is guaranteed to be a valid and defined value of Recipient:
-        // 1. Args::set_recipient only accepts Recipient values
-        // 2. ArgsRaw::set_recipient is only set with values from u8::from(Recipient)
-        // 3. Recipient::try_from(u8) only fails for undefined values and is unit tested with all defined values to roundtrip correctly
-        // 4. The only way to construct an Args is through Args::try_from(u32), which validates Recipient::try_from(u8)
-        #[allow(clippy::unwrap_used)]
-        self.0.recipient().try_into().unwrap()
-    }
-
-    // NOTE: Self::recipient has a SAFETY requirement on argument being `Recipient` and only setting with values
-    // returned from `impl From<Recipient> for u8`
-    pub fn set_recipient(&mut self, recipient: Recipient) -> &mut Self {
-        self.0.set_recipient(recipient.into());
-        self
-    }
-
-    pub fn connector_number(&self) -> u8 {
-        self.0.connector_number()
-    }
-
-    pub fn set_connector_number(&mut self, number: u8) -> &mut Self {
-        self.0.set_connector_number(number);
-        self
-    }
-
-    pub fn message_offset(&self) -> u8 {
-        self.0.message_offset()
-    }
-
-    pub fn set_message_offset(&mut self, offset: u8) -> &mut Self {
-        self.0.set_message_offset(offset);
-        self
-    }
-
-    pub fn num_bytes(&self) -> u8 {
-        self.0.num_bytes()
-    }
-
-    pub fn set_num_bytes(&mut self, num: u8) -> &mut Self {
-        self.0.set_num_bytes(num);
-        self
-    }
-
-    pub fn message_type(&self) -> MessageType {
-        // Panic Safety: ArgsRaw::message_type is guaranteed to be a valid and defined value of MessageType:
-        // 1. Args::set_message_type only accepts MessageType values
-        // 2. ArgsRaw::set_message_type is only set with values from u8::from(MessageType)
-        // 3. MessageType::try_from(u8) only fails for undefined values and is unit tested with all defined values to roundtrip correctly
-        // 4. The only way to construct an Args is through Args::try_from(u32), which validates MessageType::try_from(u8)
-        #[allow(clippy::unwrap_used)]
-        self.0.message_type().try_into().unwrap()
-    }
-
-    pub fn set_message_type(&mut self, message_type: MessageType) -> &mut Self {
-        self.0.set_message_type(message_type.into());
-        self
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            connector_number: 0,
+            recipient: Recipient::Connector,
+            message_offset: 0,
+            num_bytes: 0,
+            message_type: MessageType::SinkCapExtended,
+        }
     }
 }
 
@@ -172,68 +132,82 @@ pub enum InvalidArgs {
     InvalidMessageType(InvalidMessageType),
 }
 
+impl TryFrom<ArgBitsRaw> for Args {
+    type Error = InvalidArgs;
+
+    fn try_from(raw: ArgBitsRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            connector_number: raw.connector_number(),
+            recipient: raw.recipient().try_into().map_err(InvalidArgs::InvalidRecipient)?,
+            message_offset: raw.message_offset(),
+            num_bytes: raw.num_bytes(),
+            message_type: raw.message_type().try_into().map_err(InvalidArgs::InvalidMessageType)?,
+        })
+    }
+}
+
+impl From<Args> for ArgBitsRaw {
+    fn from(args: Args) -> Self {
+        let mut raw = ArgBitsRaw(0);
+        raw.set_connector_number(args.connector_number);
+        raw.set_recipient(args.recipient.into());
+        raw.set_message_offset(args.message_offset);
+        raw.set_num_bytes(args.num_bytes);
+        raw.set_message_type(args.message_type.into());
+        raw
+    }
+}
+
 impl TryFrom<u32> for Args {
     type Error = InvalidArgs;
 
     fn try_from(raw: u32) -> Result<Self, Self::Error> {
-        // note: safety requirements must be upheld by validating enum fields are valid defined values
-        let raw = ArgsRaw(raw);
-        let _recipient: Recipient = raw.recipient().try_into().map_err(InvalidArgs::InvalidRecipient)?;
-        let _message_type: MessageType = raw.message_type().try_into().map_err(InvalidArgs::InvalidMessageType)?;
-
-        // all fields are valid
-        Ok(Args(raw))
+        ArgBitsRaw(raw).try_into()
     }
 }
 
 impl From<Args> for u32 {
     fn from(args: Args) -> Self {
-        args.0 .0
+        ArgBitsRaw::from(args).0
     }
 }
 
-impl Default for Args {
-    fn default() -> Self {
-        Args(ArgsRaw(0))
+/// Raw wire format of [`Args`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ArgsRaw {
+    /// Argument bits, see [`ArgBitsRaw`]
+    pub bits: U32LE,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ArgsRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ArgsRaw {{ bits: {} }}", ArgBitsRaw(self.bits.get()))
     }
 }
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        Encode::encode(&self.0 .0, encoder)?;
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+impl From<Args> for ArgsRaw {
+    fn from(args: Args) -> Self {
+        Self {
+            bits: U32LE::new(args.into()),
+            ..Default::default()
+        }
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u32::decode(decoder)?;
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Args::try_from(raw).map_err(|err| match err {
-            InvalidArgs::InvalidRecipient(invalid_recipient) => DecodeError::UnexpectedVariant {
-                type_name: "Recipient",
-                allowed: &bincode::error::AllowedEnumVariants::Allowed(&[
-                    Recipient::Connector as u32,
-                    Recipient::Sop as u32,
-                    Recipient::SopP as u32,
-                    Recipient::SopPp as u32,
-                ]),
-                found: invalid_recipient.0 as u32,
-            },
-            InvalidArgs::InvalidMessageType(invalid_message_type) => DecodeError::UnexpectedVariant {
-                type_name: "MessageType",
-                allowed: &bincode::error::AllowedEnumVariants::Allowed(&[
-                    MessageType::SinkCapExtended as u32,
-                    MessageType::SourceCapExtended as u32,
-                    MessageType::BatteryCap as u32,
-                    MessageType::BatteryStatus as u32,
-                    MessageType::DiscoverIdentity as u32,
-                ]),
-                found: invalid_message_type.0 as u32,
-            },
-        })
+impl TryFrom<ArgsRaw> for Args {
+    type Error = InvalidArgs;
+
+    fn try_from(raw: ArgsRaw) -> Result<Self, Self::Error> {
+        raw.bits.get().try_into()
     }
 }
 
@@ -245,26 +219,41 @@ pub struct ResponseData {
     pub bytes: [u8; RESPONSE_DATA_LEN],
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.bytes.encode(encoder)
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ResponseDataRaw {
+    /// Returned bytes
+    pub bytes: [u8; RESPONSE_DATA_LEN],
+}
+
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        Self { bytes: data.bytes }
     }
 }
 
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        Ok(ResponseData {
-            bytes: Decode::decode(decoder)?,
-        })
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        Self { bytes: raw.bytes }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
+
+    #[test]
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
 
     #[test]
     fn test_message_type_try_from() {
@@ -293,99 +282,72 @@ mod test {
     }
 
     #[test]
-    fn test_decode_args() {
+    fn test_args_raw_roundtrip() {
         // SOP on connector 3, message offset 2, 1 byte, battery cap message type
-        let encoded: [u8; 6] = [0x83, 0x08, 0x01, 0x02, 0x00, 0x00];
-        let (decoded, size): (Args, usize) = decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(size, 6);
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x08, 0x01, 0x02, 0x00, 0x00];
+        let expected = Args {
+            connector_number: 3,
+            recipient: Recipient::Sop,
+            message_offset: 2,
+            num_bytes: 1,
+            message_type: MessageType::BatteryCap,
+        };
 
-        let mut expected = Args::default();
-        expected.set_connector_number(3);
-        expected.set_recipient(Recipient::Sop);
-        expected.set_message_offset(2);
-        expected.set_num_bytes(1);
-        expected.set_message_type(MessageType::BatteryCap);
-        assert_eq!(decoded, expected);
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        assert_eq!(bytes, encoded);
     }
 
     #[test]
-    fn test_decode_args_invalid_recipient() {
+    fn test_args_raw_roundtrip_recipient_cross_byte() {
+        // SOP'' (0b011) on connector 0x7f, recipient bit 0 is in byte 0 and bit 1 in byte 1
+        let encoded: [u8; ArgsRaw::LEN] = [0xff, 0x01, 0x00, 0x04, 0x00, 0x00];
+        let expected = Args {
+            connector_number: 0x7f,
+            recipient: Recipient::SopPp,
+            message_offset: 0,
+            num_bytes: 0,
+            message_type: MessageType::DiscoverIdentity,
+        };
+
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        assert_eq!(bytes, encoded);
+    }
+
+    #[test]
+    fn test_args_raw_invalid_recipient() {
         // Invalid recipient on connector 3, message offset 2, 1 byte, battery cap message type
-        let encoded: [u8; 6] = [0x83, 0x0B, 0x01, 0x02, 0x00, 0x00];
-        let Err(bincode::error::DecodeError::UnexpectedVariant {
-            type_name,
-            allowed,
-            found,
-        }): Result<(Args, usize), _> = decode_from_slice(&encoded, standard().with_fixed_int_encoding())
-        else {
-            panic!("Expected UnexpectedVariant error");
-        };
-        assert_eq!(type_name, "Recipient");
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x0B, 0x01, 0x02, 0x00, 0x00];
         assert_eq!(
-            *allowed,
-            bincode::error::AllowedEnumVariants::Allowed(&[
-                Recipient::Connector as u32,
-                Recipient::Sop as u32,
-                Recipient::SopP as u32,
-                Recipient::SopPp as u32,
-            ])
+            Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)),
+            Err(InvalidArgs::InvalidRecipient(InvalidRecipient(0x07)))
         );
-        assert_eq!(found, 0x07);
     }
 
     #[test]
-    fn test_decode_args_invalid_message_type() {
-        // Invalid message type on connector 3, message offset 2, 1 byte, battery cap message type
-        let encoded: [u8; 6] = [0x83, 0x38, 0x01, 0x0f, 0x00, 0x00];
-        let Err(bincode::error::DecodeError::UnexpectedVariant {
-            type_name,
-            allowed,
-            found,
-        }): Result<(Args, usize), _> = decode_from_slice(&encoded, standard().with_fixed_int_encoding())
-        else {
-            panic!("Expected UnexpectedVariant error");
-        };
-        assert_eq!(type_name, "MessageType");
+    fn test_args_raw_invalid_message_type() {
+        // Invalid message type on connector 3, message offset 14, 1 byte
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x38, 0x01, 0x0f, 0x00, 0x00];
         assert_eq!(
-            *allowed,
-            bincode::error::AllowedEnumVariants::Allowed(&[
-                MessageType::SinkCapExtended as u32,
-                MessageType::SourceCapExtended as u32,
-                MessageType::BatteryCap as u32,
-                MessageType::BatteryStatus as u32,
-                MessageType::DiscoverIdentity as u32,
-            ])
+            Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)),
+            Err(InvalidArgs::InvalidMessageType(InvalidMessageType(0x0f)))
         );
-        assert_eq!(found, 0x0f);
     }
 
     #[test]
-    fn test_decode_response_data() {
+    fn test_response_data_raw_roundtrip() {
         // No particular meaning to these values
-        let encoded: [u8; RESPONSE_DATA_LEN] = [
+        let encoded: [u8; ResponseDataRaw::LEN] = [
             0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0xAB, 0xCD, 0xEF, 0x12,
         ];
-        let (decoded, size): (ResponseData, usize) =
-            decode_from_slice(&encoded, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(size, RESPONSE_DATA_LEN);
+        let expected = ResponseData { bytes: encoded };
 
-        let mut expected = ResponseData::default();
-        expected.bytes[0] = 0x34;
-        expected.bytes[1] = 0x12;
-        expected.bytes[2] = 0x78;
-        expected.bytes[3] = 0x56;
-        expected.bytes[4] = 0x34;
-        expected.bytes[5] = 0x12;
-        expected.bytes[6] = 0x12;
-        expected.bytes[7] = 0x34;
-        expected.bytes[8] = 0x12;
-        expected.bytes[9] = 0x34;
-        expected.bytes[10] = 0x56;
-        expected.bytes[11] = 0x78;
-        expected.bytes[12] = 0xAB;
-        expected.bytes[13] = 0xCD;
-        expected.bytes[14] = 0xEF;
-        expected.bytes[15] = 0x12;
-        assert_eq!(decoded, expected);
+        assert_eq!(
+            ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(encoded)),
+            expected
+        );
+        let bytes: [u8; ResponseDataRaw::LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(bytes, encoded);
     }
 }
