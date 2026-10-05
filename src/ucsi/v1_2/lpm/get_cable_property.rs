@@ -1,36 +1,48 @@
 //! Types for GET_CABLE_PROPERTY command, see UCSI spec 6.5.16
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
 
 use crate::pdo::MA50_UNIT;
+use crate::ucsi::v1_2::lpm::ConnectorNumberRaw;
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 
 /// Data length for the GET_CABLE_PROPERTY command response
 pub const RESPONSE_DATA_LEN: usize = 5;
 /// Command padding
-// -1 for the connector number byte
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - 1;
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ConnectorNumberRaw>();
 
-/// Command arguments
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Raw wire format of the command arguments
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args;
+pub struct ArgsRaw {
+    /// Connector number in bits 6:0
+    pub connector: u8,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl From<u8> for ArgsRaw {
+    /// Creates raw arguments for the given connector number
+    fn from(connector_number: u8) -> Self {
+        let mut connector = ConnectorNumberRaw::default();
+        connector.set_connector_number(connector_number);
+        Self {
+            connector: connector.0,
+            ..Default::default()
+        }
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Self)
+impl From<ArgsRaw> for u8 {
+    /// Returns the connector number
+    fn from(raw: ArgsRaw) -> Self {
+        ConnectorNumberRaw(raw.connector).connector_number()
     }
 }
 
@@ -148,10 +160,10 @@ impl From<PlugEndType> for u8 {
 }
 
 bitfield! {
-    /// Raw response
+    /// Raw response bits
     #[derive(Copy, Clone, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    struct ResponseRaw([u8]);
+    pub struct ResponseBitsRaw([u8]);
     impl Debug;
 
     /// Speed supported
@@ -200,7 +212,7 @@ pub struct ResponseData {
 
 impl From<[u8; RESPONSE_DATA_LEN]> for ResponseData {
     fn from(value: [u8; RESPONSE_DATA_LEN]) -> Self {
-        let raw = ResponseRaw(value);
+        let raw = ResponseBitsRaw(value);
         ResponseData {
             speed_supported: SpeedSupported::from(raw.speed_supported()),
             current_capability: (raw.current_capability() as u16) * MA50_UNIT,
@@ -217,7 +229,7 @@ impl From<[u8; RESPONSE_DATA_LEN]> for ResponseData {
 
 impl From<ResponseData> for [u8; RESPONSE_DATA_LEN] {
     fn from(value: ResponseData) -> [u8; RESPONSE_DATA_LEN] {
-        let mut raw = ResponseRaw([0u8; RESPONSE_DATA_LEN]);
+        let mut raw = ResponseBitsRaw([0u8; RESPONSE_DATA_LEN]);
         let speed: u16 = value.speed_supported.into();
         raw.set_speed_supported(speed);
         raw.set_current_capability((value.current_capability / MA50_UNIT) as u8);
@@ -232,29 +244,59 @@ impl From<ResponseData> for [u8; RESPONSE_DATA_LEN] {
     }
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        let raw: [u8; RESPONSE_DATA_LEN] = (*self).into();
-        raw.encode(encoder)
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ResponseDataRaw {
+    /// Response bits, see [`ResponseBitsRaw`]
+    pub bits: [u8; RESPONSE_DATA_LEN],
+}
+
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ResponseDataRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ResponseDataRaw {{ bits: {} }}", ResponseBitsRaw(self.bits))
     }
 }
 
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw: [u8; RESPONSE_DATA_LEN] = Decode::decode(decoder)?;
-        Ok(raw.into())
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        raw.bits.into()
+    }
+}
+
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        Self { bits: data.into() }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
 
     #[test]
-    fn test_encode_response_data() {
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        let encoded: [u8; ArgsRaw::LEN] = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let raw = ArgsRaw::from(3);
+
+        assert_eq!(bytemuck::must_cast::<_, [u8; ArgsRaw::LEN]>(raw), encoded);
+        assert_eq!(u8::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), 3);
+    }
+
+    #[test]
+    fn test_response_data_roundtrip() {
         let bytes: [u8; RESPONSE_DATA_LEN] = [0x05, 0x00, 0x02, 0xF7, 0x0A];
         let expected = ResponseData {
             speed_supported: SpeedSupported::Kbps(1),
@@ -267,9 +309,12 @@ mod test {
             cable_pd_major: 3,
             latency: 10,
         };
-        let (data, len): (ResponseData, _) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).expect("Decoding failed");
-        assert_eq!(data, expected);
-        assert_eq!(len, RESPONSE_DATA_LEN);
+
+        assert_eq!(
+            ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(bytes)),
+            expected
+        );
+        let encoded: [u8; RESPONSE_DATA_LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(encoded, bytes);
     }
 }

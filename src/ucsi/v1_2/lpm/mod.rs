@@ -213,8 +213,9 @@ impl<T: PortId> Encode for Command<T> {
                 bytes.encode(encoder)
             }
             CommandData::GetCableProperty => {
-                raw_port.encode(encoder)?;
-                get_cable_property::Args.encode(encoder)
+                let bytes: [u8; get_cable_property::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_cable_property::ArgsRaw::from(raw_port));
+                bytes.encode(encoder)
             }
             CommandData::GetPdMessage(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
@@ -353,9 +354,8 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
                 })
             }
             CommandType::GetCableProperty => {
-                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
-                // Don't actually have any args, but need to consume command padding
-                let _args = get_cable_property::Args::decode(decoder)?;
+                let bytes = <[u8; get_cable_property::ArgsRaw::LEN]>::decode(decoder)?;
+                let connector_number = u8::from(bytemuck::must_cast::<_, get_cable_property::ArgsRaw>(bytes));
                 Ok(Command {
                     port: From::from(connector_number),
                     operation: CommandData::GetCableProperty,
@@ -435,7 +435,11 @@ impl Encode for ResponseData {
                 let len = data.iter().len() * size_of::<u32>();
                 bytes.iter().take(len).try_for_each(|byte| byte.encode(encoder))
             }
-            ResponseData::GetCableProperty(data) => data.encode(encoder),
+            ResponseData::GetCableProperty(data) => {
+                let bytes: [u8; get_cable_property::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_cable_property::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
             ResponseData::GetPdMessage(data) => {
                 let bytes: [u8; get_pd_message::ResponseDataRaw::LEN] =
                     bytemuck::must_cast(get_pd_message::ResponseDataRaw::from(*data));
@@ -482,9 +486,12 @@ impl Decode<CommandType> for ResponseData {
                     bytemuck::must_cast::<_, get_pdos::ResponseDataRaw>(bytes).into(),
                 ))
             }
-            CommandType::GetCableProperty => Ok(ResponseData::GetCableProperty(
-                get_cable_property::ResponseData::decode(decoder)?,
-            )),
+            CommandType::GetCableProperty => {
+                let bytes = <[u8; get_cable_property::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetCableProperty(
+                    bytemuck::must_cast::<_, get_cable_property::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             CommandType::GetPdMessage => {
                 let bytes = <[u8; get_pd_message::ResponseDataRaw::LEN]>::decode(decoder)?;
                 Ok(ResponseData::GetPdMessage(
