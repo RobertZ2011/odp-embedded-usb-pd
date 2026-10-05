@@ -54,24 +54,6 @@ pub struct ResponseData {
     pub alt_modes: [bool; MAX_ALT_MODES],
 }
 
-impl ResponseData {
-    /// Returns true if the alternate mode at `index` is supported
-    ///
-    /// Returns false for an out of range `index`.
-    pub fn alt_mode_supported(&self, index: usize) -> bool {
-        self.alt_modes.get(index).copied().unwrap_or(false)
-    }
-
-    /// Sets the support flag for the alternate mode at `index`
-    ///
-    /// Does nothing for an out of range `index`.
-    pub fn set_alt_mode_supported(&mut self, index: usize, supported: bool) {
-        if let Some(alt_mode) = self.alt_modes.get_mut(index) {
-            *alt_mode = supported;
-        }
-    }
-}
-
 /// Raw wire format of [`ResponseData`]
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
@@ -136,18 +118,8 @@ mod test {
 
         let data = ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(bytes));
         assert_eq!(data, expected);
-        assert!(data.alt_mode_supported(1));
-        assert!(!data.alt_mode_supported(2));
-        assert!(!data.alt_mode_supported(MAX_ALT_MODES));
 
         let encoded: [u8; RESPONSE_DATA_LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
         assert_eq!(encoded, bytes);
-    }
-
-    #[test]
-    fn test_set_alt_mode_supported_out_of_range() {
-        let mut data = ResponseData::default();
-        data.set_alt_mode_supported(MAX_ALT_MODES, true);
-        assert_eq!(data, ResponseData::default());
     }
 }
