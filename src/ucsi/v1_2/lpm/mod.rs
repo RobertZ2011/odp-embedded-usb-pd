@@ -27,7 +27,7 @@ pub mod set_uor;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CommandData {
-    ConnectorReset,
+    ConnectorReset(connector_reset::Args),
     GetConnectorStatus,
     GetConnectorCapability,
     SetPowerLevel(set_power_level::Args),
@@ -48,7 +48,7 @@ impl CommandData {
     /// Returns the command type for this command
     pub const fn command_type(&self) -> CommandType {
         match self {
-            CommandData::ConnectorReset => CommandType::ConnectorReset,
+            CommandData::ConnectorReset(_) => CommandType::ConnectorReset,
             CommandData::GetConnectorStatus => CommandType::GetConnectorStatus,
             CommandData::GetConnectorCapability => CommandType::GetConnectorCapability,
             CommandData::SetPowerLevel(_) => CommandType::SetPowerLevel,
@@ -89,6 +89,9 @@ impl<T: PortId> Command<T> {
         // These commands have the connector number as part of their arguments, update them too
         // TODO: Figure out how to remove this
         match self.operation {
+            CommandData::ConnectorReset(ref mut args) => {
+                args.connector_number = self.port.into();
+            }
             CommandData::SetPowerLevel(ref mut args) => {
                 args.connector_number = self.port.into();
             }
@@ -141,9 +144,11 @@ impl<T: PortId> Encode for Command<T> {
         CommandHeader::new(self.command_type(), 0).encode(encoder)?;
         let raw_port: u8 = self.port.into();
         match self.operation {
-            CommandData::ConnectorReset => {
-                raw_port.encode(encoder)?;
-                connector_reset::Args.encode(encoder)
+            CommandData::ConnectorReset(args) => {
+                // The connector number for this command is combined with its arguments, let it handle everything
+                let bytes: [u8; connector_reset::ArgsRaw::LEN] =
+                    bytemuck::must_cast(connector_reset::ArgsRaw::from(args));
+                bytes.encode(encoder)
             }
             CommandData::GetConnectorStatus => {
                 raw_port.encode(encoder)?;
@@ -223,12 +228,12 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
     fn decode<D: Decoder<Context = CommandHeader>>(decoder: &mut D) -> Result<Self, DecodeError> {
         match decoder.context().command() {
             CommandType::ConnectorReset => {
-                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
-                // Don't actually have any args, but need to consume command padding
-                let _args = connector_reset::Args::decode(decoder)?;
+                // The connector number is combined with arguments, let it handle everything
+                let bytes = <[u8; connector_reset::ArgsRaw::LEN]>::decode(decoder)?;
+                let args = connector_reset::Args::from(bytemuck::must_cast::<_, connector_reset::ArgsRaw>(bytes));
                 Ok(Command {
-                    port: From::from(connector_number),
-                    operation: CommandData::ConnectorReset,
+                    port: From::from(args.connector_number),
+                    operation: CommandData::ConnectorReset(args),
                 })
             }
             CommandType::GetConnectorStatus => {
@@ -632,14 +637,17 @@ mod tests {
         bytes[0] = CommandType::ConnectorReset as u8;
         bytes[2] = 0x81;
 
-        let (connector_reset, consumed): (GlobalCommand, usize) =
+        let (command, consumed): (GlobalCommand, usize) =
             decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
         assert_eq!(consumed, bytes.len());
         assert_eq!(
-            connector_reset,
+            command,
             GlobalCommand {
                 port: GlobalPortId(1),
-                operation: CommandData::ConnectorReset,
+                operation: CommandData::ConnectorReset(connector_reset::Args {
+                    connector_number: 1,
+                    hard_reset: true,
+                }),
             }
         );
     }
