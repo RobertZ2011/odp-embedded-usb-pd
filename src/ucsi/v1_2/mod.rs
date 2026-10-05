@@ -1,11 +1,10 @@
 //! UCSI v1.2 implementation, see spec at https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/usb-type-c-ucsi-spec.pdf
 #![allow(missing_docs)]
 
-use bincode::de::{Decode, Decoder};
 use bincode::enc::write::Writer;
 use bincode::enc::{Encode, Encoder};
-use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
-use bincode::{decode_from_slice, encode_into_slice};
+use bincode::encode_into_slice;
+use bincode::error::EncodeError;
 use bytemuck::{Pod, Zeroable};
 
 use crate::{GlobalPortId, LocalPortId, PdError, PortId};
@@ -116,6 +115,67 @@ impl From<CommandType> for u8 {
     }
 }
 
+/// Length of a UCSI command payload, the command minus its header
+pub const COMMAND_PAYLOAD_LEN: usize = COMMAND_LEN - CommandHeaderRaw::LEN;
+
+/// Error returned when a command cannot be converted to or from its raw bytes
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum InvalidCommand {
+    /// Not a valid command type
+    InvalidCommandType(InvalidCommandType),
+    /// Invalid LPM command
+    Lpm(lpm::InvalidCommand),
+}
+
+impl From<InvalidCommandType> for InvalidCommand {
+    fn from(value: InvalidCommandType) -> Self {
+        InvalidCommand::InvalidCommandType(value)
+    }
+}
+
+impl From<lpm::InvalidCommand> for InvalidCommand {
+    fn from(value: lpm::InvalidCommand) -> Self {
+        InvalidCommand::Lpm(value)
+    }
+}
+
+impl From<InvalidCommand> for PdError {
+    fn from(_: InvalidCommand) -> Self {
+        PdError::InvalidParams
+    }
+}
+
+/// Raw wire format of [`Command`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct CommandRaw {
+    /// Command type
+    pub command: u8,
+    /// Data length
+    pub data_len: u8,
+    /// Command payload, interpreted according to the command type
+    pub payload: [u8; COMMAND_PAYLOAD_LEN],
+}
+
+impl CommandRaw {
+    /// Length of a raw command in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for CommandRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "CommandRaw {{ command: {}, data_len: {}, payload: {} }}",
+            self.command,
+            self.data_len,
+            self.payload
+        )
+    }
+}
+
 /// UCSI commands
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -128,6 +188,11 @@ pub type GlobalCommand = Command<GlobalPortId>;
 pub type LocalCommand = Command<LocalPortId>;
 
 impl<T: PortId> Command<T> {
+    /// Length of a command in bytes
+    pub const LEN: usize = COMMAND_LEN;
+    /// Length of a command payload, the command minus its header
+    pub const PAYLOAD_LEN: usize = COMMAND_PAYLOAD_LEN;
+
     /// Returns the command type for this command
     pub const fn command_type(&self) -> CommandType {
         match self {
@@ -136,141 +201,46 @@ impl<T: PortId> Command<T> {
         }
     }
 
-    /// Deserialize the a command from a slice
-    pub fn decode_from_slice(bytes: &[u8]) -> Result<(Self, usize), DecodeError> {
-        decode_from_slice(bytes, bincode::config::standard().with_fixed_int_encoding())
-    }
-}
+    /// Converts this command into its raw bytes
+    pub fn to_bytes(&self) -> Result<[u8; COMMAND_LEN], InvalidCommand> {
+        let payload = match self {
+            Command::PpmCommand(cmd) => cmd.to_payload(),
+            Command::LpmCommand(cmd) => cmd.to_payload()?,
+        };
 
-impl<Context, T: PortId> Decode<Context> for Command<T> {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u16::decode(decoder)?;
-        let header = CommandHeader::try_from(raw).map_err(|err| DecodeError::UnexpectedVariant {
-            type_name: "CommandType",
-            allowed: &AllowedEnumVariants::Range { min: 0x01, max: 0x15 },
-            found: err.0 as u32,
+        Ok(bytemuck::must_cast(CommandRaw {
+            command: self.command_type().into(),
+            // Data length is only non-zero for vendor-defined commands, none of which are modelled here
+            data_len: 0,
+            payload,
+        }))
+    }
+
+    /// Reconstructs a command from its raw bytes
+    ///
+    /// The data length in the header is ignored, every modelled command has a fixed-size payload.
+    pub fn from_bytes(bytes: [u8; COMMAND_LEN]) -> Result<Self, InvalidCommand> {
+        let raw = bytemuck::must_cast::<_, CommandRaw>(bytes);
+        let header = CommandHeader::try_from(CommandHeaderRaw {
+            command: raw.command,
+            data_len: raw.data_len,
         })?;
+
         match header.command {
             // PPM commands
             command_type @ (CommandType::PpmReset
             | CommandType::Cancel
             | CommandType::GetCapability
             | CommandType::AckCcCi
-            | CommandType::SetNotificationEnable) => {
-                let payload: [u8; ppm::Command::PAYLOAD_LEN] = Decode::decode(decoder)?;
-                let command =
-                    ppm::Command::from_payload(command_type, payload).map_err(|_| DecodeError::UnexpectedVariant {
-                        type_name: "CommandType",
-                        allowed: &AllowedEnumVariants::Allowed(&[
-                            CommandType::PpmReset as u32,
-                            CommandType::Cancel as u32,
-                            CommandType::AckCcCi as u32,
-                            CommandType::SetNotificationEnable as u32,
-                            CommandType::GetCapability as u32,
-                        ]),
-                        found: command_type as u32,
-                    })?;
-                Ok(Command::PpmCommand(command))
-            }
+            | CommandType::SetNotificationEnable) => Ok(Command::PpmCommand(ppm::Command::from_payload(
+                command_type,
+                raw.payload,
+            )?)),
             // All other commands are LPM commands
-            command_type => {
-                let payload: [u8; lpm::COMMAND_PAYLOAD_LEN] = Decode::decode(decoder)?;
-                let command = lpm::Command::from_payload(command_type, payload)?;
-                Ok(Command::LpmCommand(command))
-            }
-        }
-    }
-}
-
-impl From<lpm::InvalidRecipient> for DecodeError {
-    fn from(value: lpm::InvalidRecipient) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "Recipient",
-            allowed: &AllowedEnumVariants::Allowed(&[
-                lpm::Recipient::Connector as u32,
-                lpm::Recipient::Sop as u32,
-                lpm::Recipient::SopP as u32,
-                lpm::Recipient::SopPp as u32,
-            ]),
-            found: value.0 as u32,
-        }
-    }
-}
-
-impl From<lpm::get_pdos::InvalidSourceCapabilityType> for DecodeError {
-    fn from(value: lpm::get_pdos::InvalidSourceCapabilityType) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "SourceCapabilityType",
-            allowed: &AllowedEnumVariants::Allowed(&[
-                lpm::get_pdos::SourceCapabilityType::Current as u32,
-                lpm::get_pdos::SourceCapabilityType::Advertised as u32,
-                lpm::get_pdos::SourceCapabilityType::Maximum as u32,
-            ]),
-            found: value.0 as u32,
-        }
-    }
-}
-
-impl From<lpm::get_pd_message::InvalidMessageType> for DecodeError {
-    fn from(value: lpm::get_pd_message::InvalidMessageType) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "MessageType",
-            allowed: &AllowedEnumVariants::Allowed(&[
-                lpm::get_pd_message::MessageType::SinkCapExtended as u32,
-                lpm::get_pd_message::MessageType::SourceCapExtended as u32,
-                lpm::get_pd_message::MessageType::BatteryCap as u32,
-                lpm::get_pd_message::MessageType::BatteryStatus as u32,
-                lpm::get_pd_message::MessageType::DiscoverIdentity as u32,
-            ]),
-            found: value.0 as u32,
-        }
-    }
-}
-
-impl From<lpm::get_pd_message::InvalidArgs> for DecodeError {
-    fn from(value: lpm::get_pd_message::InvalidArgs) -> Self {
-        match value {
-            lpm::get_pd_message::InvalidArgs::InvalidRecipient(err) => err.into(),
-            lpm::get_pd_message::InvalidArgs::InvalidMessageType(err) => err.into(),
-        }
-    }
-}
-
-impl From<lpm::InvalidCommand> for DecodeError {
-    fn from(value: lpm::InvalidCommand) -> Self {
-        match value {
-            lpm::InvalidCommand::InvalidCommandType(err) => DecodeError::UnexpectedVariant {
-                type_name: "CommandType",
-                allowed: &AllowedEnumVariants::Allowed(&[
-                    CommandType::ConnectorReset as u32,
-                    CommandType::GetConnectorCapability as u32,
-                    CommandType::SetCcom as u32,
-                    CommandType::SetUor as u32,
-                    CommandType::SetPdr as u32,
-                    CommandType::GetAlternateModes as u32,
-                    CommandType::GetCamSupported as u32,
-                    CommandType::GetCurrentCam as u32,
-                    CommandType::SetNewCam as u32,
-                    CommandType::GetPdos as u32,
-                    CommandType::GetCableProperty as u32,
-                    CommandType::GetConnectorStatus as u32,
-                    CommandType::GetErrorStatus as u32,
-                    CommandType::SetPowerLevel as u32,
-                    CommandType::GetPdMessage as u32,
-                ]),
-                found: err.0 as u32,
-            },
-            lpm::InvalidCommand::InvalidCurrent(err) => DecodeError::UnexpectedVariant {
-                type_name: "Current",
-                allowed: &AllowedEnumVariants::Range { min: 0, max: 3 },
-                found: err.0 as u32,
-            },
-            lpm::InvalidCommand::InvalidRecipient(err) => err.into(),
-            lpm::InvalidCommand::InvalidSourceCapabilityType(err) => err.into(),
-            lpm::InvalidCommand::InvalidPdMessageArgs(err) => err.into(),
-            // These errors can only be produced when converting a command to its payload
-            lpm::InvalidCommand::Overflow(_) => DecodeError::Other("Argument overflow"),
-            lpm::InvalidCommand::InvalidNumPdos(_) => DecodeError::Other("Invalid number of PDOs"),
+            command_type => Ok(Command::LpmCommand(lpm::Command::from_payload(
+                command_type,
+                raw.payload,
+            )?)),
         }
     }
 }
@@ -428,39 +398,45 @@ impl From<CommandHeader> for u16 {
 mod tests {
     use super::*;
 
-    /// Test PPM command decoding
+    /// Test PPM command round-tripping
     ///
     /// Only test one command just to make sure the overall flow works
     #[test]
-    fn test_command_decoding_ppm() {
+    fn test_command_bytes_ppm() {
         let mut bytes = [0u8; COMMAND_LEN];
         bytes[0] = CommandType::AckCcCi as u8;
         bytes[2] = 0x2; // Set connector change ack
 
-        let (ack_cc_ci, consumed) = Command::decode_from_slice(&bytes).unwrap();
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(
-            ack_cc_ci,
-            GlobalCommand::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
-                ack: ppm::ack_cc_ci::Ack::from(0x2)
-            }))
-        );
+        let expected = GlobalCommand::PpmCommand(ppm::Command::AckCcCi(ppm::ack_cc_ci::Args {
+            ack: ppm::ack_cc_ci::Ack::from(0x2),
+        }));
+
+        assert_eq!(Command::from_bytes(bytes), Ok(expected));
+        assert_eq!(expected.to_bytes(), Ok(bytes));
     }
 
-    /// Test LPM command decoding
+    /// Test LPM command round-tripping
     ///
     /// Only test one command just to make sure the overall flow works
     #[test]
-    fn test_command_decoding_lpm() {
+    fn test_command_bytes_lpm() {
         let mut bytes = [0u8; COMMAND_LEN];
         bytes[0] = CommandType::GetConnectorStatus as u8;
         bytes[2] = 0x1;
 
-        let (get_connector_status, consumed) = Command::decode_from_slice(&bytes).unwrap();
-        assert_eq!(consumed, bytes.len());
+        let expected = Command::LpmCommand(lpm::Command::new(GlobalPortId(1), lpm::CommandData::GetConnectorStatus));
+
+        assert_eq!(Command::from_bytes(bytes), Ok(expected));
+        assert_eq!(expected.to_bytes(), Ok(bytes));
+    }
+
+    #[test]
+    fn test_command_from_bytes_invalid_command_type() {
+        let bytes = [0u8; COMMAND_LEN];
+
         assert_eq!(
-            get_connector_status,
-            Command::LpmCommand(lpm::Command::new(GlobalPortId(1), lpm::CommandData::GetConnectorStatus))
+            GlobalCommand::from_bytes(bytes),
+            Err(InvalidCommand::InvalidCommandType(InvalidCommandType(0)))
         );
     }
 
