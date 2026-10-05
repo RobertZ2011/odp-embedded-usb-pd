@@ -6,7 +6,7 @@ use bincode::enc::write::Writer;
 use bincode::enc::{Encode, Encoder};
 use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bincode::{decode_from_slice, encode_into_slice};
-use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
 
 use crate::{GlobalPortId, LocalPortId, PdError, PortId};
 
@@ -20,6 +20,7 @@ pub const COMMAND_LEN: usize = 8;
 /// Ucsi opcodes, see spec for more detail
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CommandType {
     PpmReset = 0x01,
     Cancel,
@@ -143,8 +144,13 @@ impl<T: PortId> Command<T> {
 
 impl<Context, T: PortId> Decode<Context> for Command<T> {
     fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let header = CommandHeader::decode(decoder)?;
-        match header.command() {
+        let raw = u16::decode(decoder)?;
+        let header = CommandHeader::try_from(raw).map_err(|err| DecodeError::UnexpectedVariant {
+            type_name: "CommandType",
+            allowed: &AllowedEnumVariants::Range { min: 0x01, max: 0x15 },
+            found: err.0 as u32,
+        })?;
+        match header.command {
             // PPM commands
             command_type @ (CommandType::PpmReset
             | CommandType::Cancel
@@ -340,16 +346,19 @@ impl<T: PortId> From<lpm::Response<T>> for Response<T> {
 pub type GlobalResponse = Response<GlobalPortId>;
 pub type LocalResponse = Response<LocalPortId>;
 
-bitfield! {
-    /// Common header shared by all UCSI commands
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(self) struct CommandHeaderRaw(u16);
-    impl Debug;
-
+/// Raw wire format of [`CommandHeader`], the common header shared by all UCSI commands
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct CommandHeaderRaw {
     /// Command
-    pub u8, command, set_command: 7, 0;
+    pub command: u8,
     /// Data length
-    pub u8, data_len, set_data_len: 15, 8;
+    pub data_len: u8,
+}
+
+impl CommandHeaderRaw {
+    /// Length of the raw command header in bytes
+    pub const LEN: usize = size_of::<Self>();
 }
 
 #[cfg(feature = "defmt")]
@@ -358,8 +367,8 @@ impl defmt::Format for CommandHeaderRaw {
         defmt::write!(
             fmt,
             "CommandHeaderRaw {{ command: {}, data_len: {} }}",
-            self.command(),
-            self.data_len()
+            self.command,
+            self.data_len
         )
     }
 }
@@ -367,45 +376,37 @@ impl defmt::Format for CommandHeaderRaw {
 /// Higher-level wrapper around [`CommandHeaderRaw`]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CommandHeader(CommandHeaderRaw);
+pub struct CommandHeader {
+    /// Command type
+    pub command: CommandType,
+    /// Data length
+    pub data_len: u8,
+}
 
 impl CommandHeader {
     /// Create a new command header
-    pub fn new(command: CommandType, data_len: u8) -> Self {
-        let mut raw = CommandHeaderRaw(0);
-        raw.set_command(command.into());
-        raw.set_data_len(data_len);
-        Self(raw)
+    pub const fn new(command: CommandType, data_len: u8) -> Self {
+        Self { command, data_len }
     }
+}
 
-    /// Returns command type
-    pub fn command(&self) -> CommandType {
-        // Panic Safety: CommandHeaderRaw::command is guaranteed to be a valid and defined value of CommandType:
-        // 1. CommandHeader::set_command only accepts CommandType values
-        // 2. CommandHeaderRaw::set_command is only set with values from u8::from(CommandType)
-        // 3. CommandType::try_from(u8) only fails for undefined values and is unit tested with all defined values to roundtrip correctly
-        // 4. The only way to construct a CommandHeader is through CommandHeader::try_from(u16), which validates CommandType::try_from(u8)
-        #[allow(clippy::unwrap_used)]
-        self.0.command().try_into().unwrap()
+impl TryFrom<CommandHeaderRaw> for CommandHeader {
+    type Error = InvalidCommandType;
+
+    fn try_from(raw: CommandHeaderRaw) -> Result<Self, Self::Error> {
+        Ok(Self {
+            command: raw.command.try_into()?,
+            data_len: raw.data_len,
+        })
     }
+}
 
-    /// Sets command type
-    // NOTE: Self::command has a SAFETY requirement on argument being `CommandType` and only setting with values
-    // returned from `impl From<CommandType> for u8`
-    pub fn set_command(&mut self, command: CommandType) -> &mut Self {
-        self.0.set_command(command as u8);
-        self
-    }
-
-    /// Returns data length
-    pub fn data_len(&self) -> u8 {
-        self.0.data_len()
-    }
-
-    /// Sets data length
-    pub fn set_data_len(&mut self, len: u8) -> &mut Self {
-        self.0.set_data_len(len);
-        self
+impl From<CommandHeader> for CommandHeaderRaw {
+    fn from(header: CommandHeader) -> Self {
+        Self {
+            command: header.command.into(),
+            data_len: header.data_len,
+        }
     }
 }
 
@@ -413,58 +414,18 @@ impl TryFrom<u16> for CommandHeader {
     type Error = InvalidCommandType;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-        let raw = CommandHeaderRaw(value);
-
-        // Validate command
-        let _: CommandType = raw.command().try_into()?;
-        Ok(Self(raw))
+        CommandHeader::try_from(bytemuck::must_cast::<_, CommandHeaderRaw>(value.to_le_bytes()))
     }
 }
 
-impl Encode for CommandHeader {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.0 .0.encode(encoder)
-    }
-}
-
-impl<Context> Decode<Context> for CommandHeader {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = u16::decode(decoder)?;
-        CommandHeader::try_from(raw).map_err(|_| DecodeError::UnexpectedVariant {
-            type_name: "CommandHeader",
-            allowed: &AllowedEnumVariants::Allowed(&[
-                CommandType::PpmReset as u32,
-                CommandType::Cancel as u32,
-                CommandType::ConnectorReset as u32,
-                CommandType::AckCcCi as u32,
-                CommandType::SetNotificationEnable as u32,
-                CommandType::GetCapability as u32,
-                CommandType::GetConnectorCapability as u32,
-                CommandType::SetCcom as u32,
-                CommandType::SetUor as u32,
-                CommandType::SetPdm as u32,
-                CommandType::SetPdr as u32,
-                CommandType::GetAlternateModes as u32,
-                CommandType::GetCamSupported as u32,
-                CommandType::GetCurrentCam as u32,
-                CommandType::SetNewCam as u32,
-                CommandType::GetPdos as u32,
-                CommandType::GetCableProperty as u32,
-                CommandType::GetConnectorStatus as u32,
-                CommandType::GetErrorStatus as u32,
-                CommandType::SetPowerLevel as u32,
-                CommandType::GetPdMessage as u32,
-            ]),
-            found: raw as u32,
-        })
+impl From<CommandHeader> for u16 {
+    fn from(header: CommandHeader) -> Self {
+        u16::from_le_bytes(bytemuck::must_cast(CommandHeaderRaw::from(header)))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
 
     /// Test PPM command decoding
@@ -533,214 +494,59 @@ mod tests {
         assert_eq!(encoded_bytes, bytes);
     }
 
+    /// Every defined command type round-trips through the raw header, preserving the data length
     #[test]
-    fn test_command_header_decoding_ppm_reset() {
-        let bytes = [CommandType::PpmReset as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::PpmReset);
-        assert_eq!(header.data_len(), 0x06);
+    fn test_command_header_roundtrip() {
+        const COMMAND_TYPES: [CommandType; 21] = [
+            CommandType::PpmReset,
+            CommandType::Cancel,
+            CommandType::ConnectorReset,
+            CommandType::AckCcCi,
+            CommandType::SetNotificationEnable,
+            CommandType::GetCapability,
+            CommandType::GetConnectorCapability,
+            CommandType::SetCcom,
+            CommandType::SetUor,
+            CommandType::SetPdm,
+            CommandType::SetPdr,
+            CommandType::GetAlternateModes,
+            CommandType::GetCamSupported,
+            CommandType::GetCurrentCam,
+            CommandType::SetNewCam,
+            CommandType::GetPdos,
+            CommandType::GetCableProperty,
+            CommandType::GetConnectorStatus,
+            CommandType::GetErrorStatus,
+            CommandType::SetPowerLevel,
+            CommandType::GetPdMessage,
+        ];
+
+        for command in COMMAND_TYPES {
+            let expected = CommandHeader::new(command, 0x06);
+            let raw = CommandHeaderRaw::from(expected);
+
+            assert_eq!(raw.command, command as u8);
+            assert_eq!(raw.data_len, 0x06);
+            assert_eq!(CommandHeader::try_from(raw), Ok(expected));
+            assert_eq!(CommandHeader::try_from(u16::from(expected)), Ok(expected));
+        }
     }
 
     #[test]
-    fn test_command_header_decoding_cancel() {
-        let bytes = [CommandType::Cancel as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::Cancel);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_connector_reset() {
-        let bytes = [CommandType::ConnectorReset as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::ConnectorReset);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_ack_cc_ci() {
-        let bytes = [CommandType::AckCcCi as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::AckCcCi);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_notification_enable() {
-        let bytes = [CommandType::SetNotificationEnable as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetNotificationEnable);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_capability() {
-        // Use a different constant because GetCapability is 0x06.
-        let bytes = [CommandType::GetCapability as u8, 0x07];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetCapability);
-        assert_eq!(header.data_len(), 0x07);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_connector_capability() {
-        let bytes = [CommandType::GetConnectorCapability as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetConnectorCapability);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_ccom() {
-        let bytes = [CommandType::SetCcom as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetCcom);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_uor() {
-        let bytes = [CommandType::SetUor as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetUor);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_pdm() {
-        let bytes = [CommandType::SetPdm as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetPdm);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_pdr() {
-        let bytes = [CommandType::SetPdr as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetPdr);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_alternate_modes() {
-        let bytes = [CommandType::GetAlternateModes as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetAlternateModes);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_cam_supported() {
-        let bytes = [CommandType::GetCamSupported as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetCamSupported);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_current_cam() {
-        let bytes = [CommandType::GetCurrentCam as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetCurrentCam);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_new_cam() {
-        let bytes = [CommandType::SetNewCam as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetNewCam);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_pdos() {
-        let bytes = [CommandType::GetPdos as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetPdos);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_cable_property() {
-        let bytes = [CommandType::GetCableProperty as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetCableProperty);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_connector_status() {
-        let bytes = [CommandType::GetConnectorStatus as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetConnectorStatus);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_error_status() {
-        let bytes = [CommandType::GetErrorStatus as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetErrorStatus);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_set_power_level() {
-        let bytes = [CommandType::SetPowerLevel as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::SetPowerLevel);
-        assert_eq!(header.data_len(), 0x06);
-    }
-
-    #[test]
-    fn test_command_header_decoding_get_pd_message() {
-        let bytes = [CommandType::GetPdMessage as u8, 0x06];
-        let (header, consumed): (CommandHeader, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, 2);
-        assert_eq!(header.command(), CommandType::GetPdMessage);
-        assert_eq!(header.data_len(), 0x06);
+    fn test_command_header_invalid_command() {
+        assert_eq!(
+            CommandHeader::try_from(CommandHeaderRaw {
+                command: 0x00,
+                data_len: 0x06
+            }),
+            Err(InvalidCommandType(0x00))
+        );
+        assert_eq!(
+            CommandHeader::try_from(CommandHeaderRaw {
+                command: 0x16,
+                data_len: 0x06
+            }),
+            Err(InvalidCommandType(0x16))
+        );
     }
 }

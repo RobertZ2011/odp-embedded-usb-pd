@@ -650,8 +650,11 @@ mod tests {
 
     /// Decodes a command from a full command buffer, splitting off the header
     fn decode(bytes: [u8; COMMAND_LEN]) -> Result<GlobalCommand, InvalidCommand> {
-        let header = CommandHeaderRaw(u16::from_le_bytes([bytes[0], bytes[1]]));
-        let command_type = CommandType::try_from(header.command()).unwrap();
+        let header = CommandHeaderRaw {
+            command: bytes[0],
+            data_len: bytes[1],
+        };
+        let command_type = CommandType::try_from(header.command).unwrap();
         let mut payload = [0u8; GlobalCommand::PAYLOAD_LEN];
         payload.copy_from_slice(&bytes[size_of::<CommandHeaderRaw>()..]);
         GlobalCommand::from_payload(command_type, payload)
