@@ -151,8 +151,9 @@ impl<T: PortId> Encode for Command<T> {
                 bytes.encode(encoder)
             }
             CommandData::GetConnectorStatus => {
-                raw_port.encode(encoder)?;
-                get_connector_status::Args.encode(encoder)
+                let bytes: [u8; get_connector_status::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_connector_status::ArgsRaw::from(raw_port));
+                bytes.encode(encoder)
             }
             CommandData::GetConnectorCapability => {
                 let bytes: [u8; get_connector_capability::ArgsRaw::LEN] =
@@ -242,9 +243,8 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
                 })
             }
             CommandType::GetConnectorStatus => {
-                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
-                // Don't actually have any args, but need to consume command padding
-                let _args = get_connector_status::Args::decode(decoder)?;
+                let bytes = <[u8; get_connector_status::ArgsRaw::LEN]>::decode(decoder)?;
+                let connector_number = u8::from(bytemuck::must_cast::<_, get_connector_status::ArgsRaw>(bytes));
                 Ok(Command {
                     port: From::from(connector_number),
                     operation: CommandData::GetConnectorStatus,
@@ -410,7 +410,11 @@ impl Encode for ResponseData {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
         match self {
             ResponseData::ConnectorReset => Ok(()), // No response data
-            ResponseData::GetConnectorStatus(data) => data.encode(encoder),
+            ResponseData::GetConnectorStatus(data) => {
+                let bytes: [u8; get_connector_status::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_connector_status::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
             ResponseData::GetConnectorCapability(data) => {
                 let bytes: [u8; get_connector_capability::ResponseDataRaw::LEN] =
                     bytemuck::must_cast(get_connector_capability::ResponseDataRaw::from(*data));
@@ -461,9 +465,13 @@ impl Decode<CommandType> for ResponseData {
     fn decode<D: Decoder<Context = CommandType>>(decoder: &mut D) -> Result<Self, DecodeError> {
         match decoder.context() {
             CommandType::ConnectorReset => Ok(ResponseData::ConnectorReset),
-            CommandType::GetConnectorStatus => Ok(ResponseData::GetConnectorStatus(
-                get_connector_status::ResponseData::decode(decoder)?,
-            )),
+            CommandType::GetConnectorStatus => {
+                let bytes = <[u8; get_connector_status::ResponseDataRaw::LEN]>::decode(decoder)?;
+                let raw = bytemuck::must_cast::<_, get_connector_status::ResponseDataRaw>(bytes);
+                Ok(ResponseData::GetConnectorStatus(
+                    get_connector_status::ResponseData::try_from(raw)?,
+                ))
+            }
             CommandType::GetConnectorCapability => {
                 let bytes = <[u8; get_connector_capability::ResponseDataRaw::LEN]>::decode(decoder)?;
                 Ok(ResponseData::GetConnectorCapability(
@@ -653,6 +661,65 @@ impl From<get_pd_message::InvalidArgs> for DecodeError {
         match value {
             get_pd_message::InvalidArgs::InvalidRecipient(err) => err.into(),
             get_pd_message::InvalidArgs::InvalidMessageType(err) => err.into(),
+        }
+    }
+}
+
+impl From<get_connector_status::InvalidPowerOperationMode> for DecodeError {
+    fn from(value: get_connector_status::InvalidPowerOperationMode) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "PowerOperationMode",
+            found: value.0 as u32,
+            allowed: &AllowedEnumVariants::Allowed(&[
+                get_connector_status::PowerOperationMode::UsbDefault as u32,
+                get_connector_status::PowerOperationMode::Bc as u32,
+                get_connector_status::PowerOperationMode::Pd as u32,
+                get_connector_status::PowerOperationMode::TypeC1_5A as u32,
+                get_connector_status::PowerOperationMode::TypeC3A as u32,
+                get_connector_status::PowerOperationMode::TypeC5A as u32,
+            ]),
+        }
+    }
+}
+
+impl From<get_connector_status::InvalidConnectorPartnerType> for DecodeError {
+    fn from(value: get_connector_status::InvalidConnectorPartnerType) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "ConnectorPartnerType",
+            found: value.0 as u32,
+            allowed: &AllowedEnumVariants::Allowed(&[
+                get_connector_status::ConnectorPartnerType::DfpAttached as u32,
+                get_connector_status::ConnectorPartnerType::UfpAttached as u32,
+                get_connector_status::ConnectorPartnerType::PoweredCableNoUfp as u32,
+                get_connector_status::ConnectorPartnerType::PoweredCableUfp as u32,
+                get_connector_status::ConnectorPartnerType::DebugAccessory as u32,
+                get_connector_status::ConnectorPartnerType::AudioAdapterAccessory as u32,
+            ]),
+        }
+    }
+}
+
+impl From<get_connector_status::InvalidBatteryChargingCapabilityStatus> for DecodeError {
+    fn from(value: get_connector_status::InvalidBatteryChargingCapabilityStatus) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "BatteryChargingCapabilityStatus",
+            found: value.0 as u32,
+            allowed: &AllowedEnumVariants::Allowed(&[
+                get_connector_status::BatteryChargingCapabilityStatus::NotCharging as u32,
+                get_connector_status::BatteryChargingCapabilityStatus::Nominal as u32,
+                get_connector_status::BatteryChargingCapabilityStatus::Slow as u32,
+                get_connector_status::BatteryChargingCapabilityStatus::VerySlow as u32,
+            ]),
+        }
+    }
+}
+
+impl From<get_connector_status::InvalidResponseData> for DecodeError {
+    fn from(value: get_connector_status::InvalidResponseData) -> Self {
+        match value {
+            get_connector_status::InvalidResponseData::InvalidPowerOperationMode(err) => err.into(),
+            get_connector_status::InvalidResponseData::InvalidConnectorPartnerType(err) => err.into(),
+            get_connector_status::InvalidResponseData::InvalidBatteryChargingCapabilityStatus(err) => err.into(),
         }
     }
 }

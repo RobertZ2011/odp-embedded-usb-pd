@@ -1,18 +1,52 @@
 //! Types for GET_CONNECTOR_STATUS command, see UCSI spec 6.6
 
-use bincode::de::{Decode, Decoder};
-use bincode::enc::{Encode, Encoder};
-use bincode::error::{AllowedEnumVariants, DecodeError, EncodeError};
 use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
 
+use crate::ucsi::v1_2::lpm::ConnectorNumberRaw;
 use crate::ucsi::v1_2::ppm::set_notification_enable::NotificationEnable;
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 use crate::PowerRole;
 
 /// Data length for the GET_CONNECTOR_STATUS command response
 pub const RESPONSE_DATA_LEN: usize = 11;
-/// Command padding, -1 for the connector number byte
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - 1;
+/// Command padding
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ConnectorNumberRaw>();
+
+/// Raw wire format of the command arguments
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ArgsRaw {
+    /// Connector number in bits 6:0
+    pub connector: u8,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
+
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl From<u8> for ArgsRaw {
+    /// Creates raw arguments for the given connector number
+    fn from(connector_number: u8) -> Self {
+        let mut connector = ConnectorNumberRaw::default();
+        connector.set_connector_number(connector_number);
+        Self {
+            connector: connector.0,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<ArgsRaw> for u8 {
+    /// Returns the connector number
+    fn from(raw: ArgsRaw) -> Self {
+        ConnectorNumberRaw(raw.connector).connector_number()
+    }
+}
 
 bitfield! {
     /// Connector Status Change bitmap
@@ -76,125 +110,38 @@ impl defmt::Format for ConnectorStatusChangeRaw {
     }
 }
 
-/// Higher-level wrapper around [`ConnectorStatusChangeRaw`]
+/// Connector status change flags
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConnectorStatusChange(ConnectorStatusChangeRaw);
+pub struct ConnectorStatusChange {
+    /// External supply change
+    pub external_supply_change: bool,
+    /// Power operation mode change
+    pub power_op_mode_change: bool,
+    /// Provider capabilities change
+    pub provider_caps_change: bool,
+    /// Negotiated power level change
+    pub negotiated_power_level_change: bool,
+    /// PD reset complete
+    pub pd_reset_complete: bool,
+    /// Supported CAM change
+    pub supported_cam_change: bool,
+    /// Battery charging status change
+    pub battery_charging_status_change: bool,
+    /// Connector partner changed
+    pub connector_partner_changed: bool,
+    /// Power direction changed
+    pub power_direction_changed: bool,
+    /// Connect/disconnect
+    pub connect_change: bool,
+    /// Error
+    pub error: bool,
+}
 
 impl ConnectorStatusChange {
-    /// Returns the external supply change flag
-    pub fn external_supply_change(&self) -> bool {
-        self.0.external_supply_change()
-    }
-
-    /// Sets the external supply change flag
-    pub fn set_external_supply_change(&mut self, value: bool) {
-        self.0.set_external_supply_change(value);
-    }
-
-    /// Returns the power operation mode change flag
-    pub fn power_op_mode_change(&self) -> bool {
-        self.0.power_op_mode_change()
-    }
-
-    /// Sets the power operation mode change flag
-    pub fn set_power_op_mode_change(&mut self, value: bool) {
-        self.0.set_power_op_mode_change(value);
-    }
-
-    /// Returns the provider capabilities change flag
-    pub fn provider_caps_change(&self) -> bool {
-        self.0.provider_caps_change()
-    }
-
-    /// Sets the provider capabilities change flag
-    pub fn set_provider_caps_change(&mut self, value: bool) {
-        self.0.set_provider_caps_change(value);
-    }
-
-    /// Returns the negotiated power level change flag
-    pub fn negotiated_power_level_change(&self) -> bool {
-        self.0.negotiated_power_level_change()
-    }
-
-    /// Sets the negotiated power level change flag
-    pub fn set_negotiated_power_level_change(&mut self, value: bool) {
-        self.0.set_negotiated_power_level_change(value);
-    }
-
-    /// Returns the PD reset complete flag
-    pub fn pd_reset_complete(&self) -> bool {
-        self.0.pd_reset_complete()
-    }
-
-    /// Sets the PD reset complete flag
-    pub fn set_pd_reset_complete(&mut self, value: bool) {
-        self.0.set_pd_reset_complete(value);
-    }
-
-    /// Returns the supported CAM change flag
-    pub fn supported_cam_change(&self) -> bool {
-        self.0.supported_cam_change()
-    }
-
-    /// Sets the supported CAM change flag
-    pub fn set_supported_cam_change(&mut self, value: bool) {
-        self.0.set_supported_cam_change(value);
-    }
-
-    /// Returns the battery charging status change flag
-    pub fn battery_charging_status_change(&self) -> bool {
-        self.0.battery_charging_status_change()
-    }
-
-    /// Sets the battery charging status change flag
-    pub fn set_battery_charging_status_change(&mut self, value: bool) {
-        self.0.set_battery_charging_status_change(value);
-    }
-
-    /// Returns the connector partner changed flag
-    pub fn connector_partner_changed(&self) -> bool {
-        self.0.connector_partner_changed()
-    }
-
-    /// Sets the connector partner changed flag
-    pub fn set_connector_partner_changed(&mut self, value: bool) {
-        self.0.set_connector_partner_changed(value);
-    }
-
-    /// Returns the power direction changed flag
-    pub fn power_direction_changed(&self) -> bool {
-        self.0.power_direction_changed()
-    }
-
-    /// Sets the power direction changed flag
-    pub fn set_power_direction_changed(&mut self, value: bool) {
-        self.0.set_power_direction_changed(value);
-    }
-
-    /// Returns the connect/disconnect change flag
-    pub fn connect_change(&self) -> bool {
-        self.0.connect_change()
-    }
-
-    /// Sets the connect/disconnect change flag
-    pub fn set_connect_change(&mut self, value: bool) {
-        self.0.set_connect_change(value);
-    }
-
-    /// Returns the error flag
-    pub fn error(&self) -> bool {
-        self.0.error()
-    }
-
-    /// Sets the error flag
-    pub fn set_error(&mut self, value: bool) {
-        self.0.set_error(value);
-    }
-
     /// Returns true if no status change flags are set
     pub fn is_empty(&self) -> bool {
-        self.0 .0 == 0
+        *self == Self::default()
     }
 
     /// Returns true if any status change flags are set
@@ -205,15 +152,57 @@ impl ConnectorStatusChange {
     /// Returns a new connector status change with all flags that match the given notification enable flags
     pub fn filter_enabled(&self, enable: NotificationEnable) -> Self {
         // These bitfields have the same layout
-        let connector_raw = self.0 .0;
+        let connector_raw: u16 = (*self).into();
         let enable_raw: u16 = enable.into();
-        ConnectorStatusChange(ConnectorStatusChangeRaw(connector_raw & enable_raw))
+        Self::from(connector_raw & enable_raw)
+    }
+}
+
+impl From<ConnectorStatusChangeRaw> for ConnectorStatusChange {
+    fn from(raw: ConnectorStatusChangeRaw) -> Self {
+        Self {
+            external_supply_change: raw.external_supply_change(),
+            power_op_mode_change: raw.power_op_mode_change(),
+            provider_caps_change: raw.provider_caps_change(),
+            negotiated_power_level_change: raw.negotiated_power_level_change(),
+            pd_reset_complete: raw.pd_reset_complete(),
+            supported_cam_change: raw.supported_cam_change(),
+            battery_charging_status_change: raw.battery_charging_status_change(),
+            connector_partner_changed: raw.connector_partner_changed(),
+            power_direction_changed: raw.power_direction_changed(),
+            connect_change: raw.connect_change(),
+            error: raw.error(),
+        }
+    }
+}
+
+impl From<ConnectorStatusChange> for ConnectorStatusChangeRaw {
+    fn from(change: ConnectorStatusChange) -> Self {
+        let mut raw = ConnectorStatusChangeRaw::default();
+        raw.set_external_supply_change(change.external_supply_change);
+        raw.set_power_op_mode_change(change.power_op_mode_change);
+        raw.set_provider_caps_change(change.provider_caps_change);
+        raw.set_negotiated_power_level_change(change.negotiated_power_level_change);
+        raw.set_pd_reset_complete(change.pd_reset_complete);
+        raw.set_supported_cam_change(change.supported_cam_change);
+        raw.set_battery_charging_status_change(change.battery_charging_status_change);
+        raw.set_connector_partner_changed(change.connector_partner_changed);
+        raw.set_power_direction_changed(change.power_direction_changed);
+        raw.set_connect_change(change.connect_change);
+        raw.set_error(change.error);
+        raw
     }
 }
 
 impl From<u16> for ConnectorStatusChange {
     fn from(raw: u16) -> Self {
-        ConnectorStatusChange(ConnectorStatusChangeRaw(raw))
+        ConnectorStatusChangeRaw(raw).into()
+    }
+}
+
+impl From<ConnectorStatusChange> for u16 {
+    fn from(change: ConnectorStatusChange) -> Self {
+        ConnectorStatusChangeRaw::from(change).0
     }
 }
 
@@ -241,23 +230,6 @@ pub enum PowerOperationMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InvalidPowerOperationMode(pub u8);
-
-impl From<InvalidPowerOperationMode> for DecodeError {
-    fn from(val: InvalidPowerOperationMode) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "PowerOperationMode",
-            found: val.0 as u32,
-            allowed: &AllowedEnumVariants::Allowed(&[
-                PowerOperationMode::UsbDefault as u32,
-                PowerOperationMode::Bc as u32,
-                PowerOperationMode::Pd as u32,
-                PowerOperationMode::TypeC1_5A as u32,
-                PowerOperationMode::TypeC3A as u32,
-                PowerOperationMode::TypeC5A as u32,
-            ]),
-        }
-    }
-}
 
 impl TryFrom<u8> for PowerOperationMode {
     type Error = InvalidPowerOperationMode;
@@ -303,39 +275,40 @@ impl defmt::Format for ConnectorPartnerFlagsRaw {
 /// Connector partner flags
 #[derive(Copy, Debug, Default, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ConnectorPartnerFlags(ConnectorPartnerFlagsRaw);
+pub struct ConnectorPartnerFlags {
+    /// USB2.x or USB3.x
+    pub usb: bool,
+    /// Alternate mode
+    pub alt_mode: bool,
+}
 
-impl ConnectorPartnerFlags {
-    /// Get usb flag
-    pub fn usb(&self) -> bool {
-        self.0.usb()
+impl From<ConnectorPartnerFlagsRaw> for ConnectorPartnerFlags {
+    fn from(raw: ConnectorPartnerFlagsRaw) -> Self {
+        Self {
+            usb: raw.usb(),
+            alt_mode: raw.alt_mode(),
+        }
     }
+}
 
-    /// Set usb flag
-    pub fn set_usb(&mut self, value: bool) {
-        self.0.set_usb(value);
-    }
-
-    /// Get alternate mode flag
-    pub fn alt_mode(&self) -> bool {
-        self.0.alt_mode()
-    }
-
-    /// Set alternate mode flag
-    pub fn set_alt_mode(&mut self, value: bool) {
-        self.0.set_alt_mode(value);
+impl From<ConnectorPartnerFlags> for ConnectorPartnerFlagsRaw {
+    fn from(flags: ConnectorPartnerFlags) -> Self {
+        let mut raw = ConnectorPartnerFlagsRaw::default();
+        raw.set_usb(flags.usb);
+        raw.set_alt_mode(flags.alt_mode);
+        raw
     }
 }
 
 impl From<u8> for ConnectorPartnerFlags {
     fn from(value: u8) -> Self {
-        ConnectorPartnerFlags(ConnectorPartnerFlagsRaw(value))
+        ConnectorPartnerFlagsRaw(value).into()
     }
 }
 
 impl From<ConnectorPartnerFlags> for u8 {
     fn from(flags: ConnectorPartnerFlags) -> Self {
-        flags.0 .0
+        ConnectorPartnerFlagsRaw::from(flags).0
     }
 }
 
@@ -363,23 +336,6 @@ pub enum ConnectorPartnerType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InvalidConnectorPartnerType(pub u8);
-
-impl From<InvalidConnectorPartnerType> for DecodeError {
-    fn from(val: InvalidConnectorPartnerType) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "ConnectorPartnerType",
-            found: val.0 as u32,
-            allowed: &AllowedEnumVariants::Allowed(&[
-                ConnectorPartnerType::DfpAttached as u32,
-                ConnectorPartnerType::UfpAttached as u32,
-                ConnectorPartnerType::PoweredCableNoUfp as u32,
-                ConnectorPartnerType::PoweredCableUfp as u32,
-                ConnectorPartnerType::DebugAccessory as u32,
-                ConnectorPartnerType::AudioAdapterAccessory as u32,
-            ]),
-        }
-    }
-}
 
 impl TryFrom<u8> for ConnectorPartnerType {
     type Error = InvalidConnectorPartnerType;
@@ -417,21 +373,6 @@ pub enum BatteryChargingCapabilityStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct InvalidBatteryChargingCapabilityStatus(pub u8);
-
-impl From<InvalidBatteryChargingCapabilityStatus> for DecodeError {
-    fn from(val: InvalidBatteryChargingCapabilityStatus) -> Self {
-        DecodeError::UnexpectedVariant {
-            type_name: "BatteryChargingCapabilityStatus",
-            found: val.0 as u32,
-            allowed: &AllowedEnumVariants::Allowed(&[
-                BatteryChargingCapabilityStatus::NotCharging as u32,
-                BatteryChargingCapabilityStatus::Nominal as u32,
-                BatteryChargingCapabilityStatus::Slow as u32,
-                BatteryChargingCapabilityStatus::VerySlow as u32,
-            ]),
-        }
-    }
-}
 
 impl TryFrom<u8> for BatteryChargingCapabilityStatus {
     type Error = InvalidBatteryChargingCapabilityStatus;
@@ -471,44 +412,50 @@ impl defmt::Format for ProviderCapsLimitedReasonRaw {
     }
 }
 
+/// Reason for limited provider capabilities
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ProviderCapsLimitedReason(ProviderCapsLimitedReasonRaw);
+pub struct ProviderCapsLimitedReason {
+    /// Power budget lowered
+    pub power_budget_lowered: bool,
+    /// Reaching power budget limit
+    pub reaching_power_budget_limit: bool,
+}
 
-impl ProviderCapsLimitedReason {
-    /// Returns if power budget is lowered
-    pub fn power_budget_lowered(&self) -> bool {
-        self.0.power_budget_lowered()
+impl From<ProviderCapsLimitedReasonRaw> for ProviderCapsLimitedReason {
+    fn from(raw: ProviderCapsLimitedReasonRaw) -> Self {
+        Self {
+            power_budget_lowered: raw.power_budget_lowered(),
+            reaching_power_budget_limit: raw.reaching_power_budget_limit(),
+        }
     }
+}
 
-    /// Sets power budget lowered status
-    pub fn set_power_budget_lowered(&mut self, lowered: bool) -> &mut Self {
-        self.0.set_power_budget_lowered(lowered);
-        self
-    }
-
-    /// Returns if reaching power budget limit
-    pub fn reaching_power_budget_limit(&self) -> bool {
-        self.0.reaching_power_budget_limit()
-    }
-
-    /// Sets reaching power budget limit status
-    pub fn set_reaching_power_budget_limit(&mut self, limit: bool) -> &mut Self {
-        self.0.set_reaching_power_budget_limit(limit);
-        self
+impl From<ProviderCapsLimitedReason> for ProviderCapsLimitedReasonRaw {
+    fn from(reason: ProviderCapsLimitedReason) -> Self {
+        let mut raw = ProviderCapsLimitedReasonRaw::default();
+        raw.set_power_budget_lowered(reason.power_budget_lowered);
+        raw.set_reaching_power_budget_limit(reason.reaching_power_budget_limit);
+        raw
     }
 }
 
 impl From<u8> for ProviderCapsLimitedReason {
     fn from(raw: u8) -> Self {
-        ProviderCapsLimitedReason(ProviderCapsLimitedReasonRaw(raw))
+        ProviderCapsLimitedReasonRaw(raw).into()
+    }
+}
+
+impl From<ProviderCapsLimitedReason> for u8 {
+    fn from(reason: ProviderCapsLimitedReason) -> Self {
+        ProviderCapsLimitedReasonRaw::from(reason).0
     }
 }
 
 bitfield! {
     /// Raw response data bitfield
     #[derive(Copy, Clone, Default, PartialEq, Eq)]
-    pub struct ResponseDataRaw([u8]);
+    pub struct ResponseBitsRaw([u8]);
     impl Debug;
 
     // Connector Status Change
@@ -534,11 +481,11 @@ bitfield! {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ResponseDataRaw<[u8; RESPONSE_DATA_LEN]> {
+impl defmt::Format for ResponseBitsRaw<[u8; RESPONSE_DATA_LEN]> {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "ResponseDataRaw {{ .0: {}\
+            "ResponseBitsRaw {{ .0: {}\
                 status_change: {}, \
                 power_op_mode: {}, \
                 connect_status: {}, \
@@ -601,6 +548,9 @@ pub struct ResponseData {
     pub status: Option<ConnectedStatus>,
 }
 
+/// Error returned when the raw response data cannot be decoded
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InvalidResponseData {
     /// Invalid power operation mode
     InvalidPowerOperationMode(InvalidPowerOperationMode),
@@ -610,21 +560,25 @@ pub enum InvalidResponseData {
     InvalidBatteryChargingCapabilityStatus(InvalidBatteryChargingCapabilityStatus),
 }
 
-impl From<InvalidResponseData> for DecodeError {
-    fn from(err: InvalidResponseData) -> Self {
-        match err {
-            InvalidResponseData::InvalidPowerOperationMode(e) => e.into(),
-            InvalidResponseData::InvalidConnectorPartnerType(e) => e.into(),
-            InvalidResponseData::InvalidBatteryChargingCapabilityStatus(e) => e.into(),
-        }
-    }
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ResponseDataRaw {
+    /// Response data bits, see [`ResponseBitsRaw`]
+    pub bits: [u8; RESPONSE_DATA_LEN],
 }
 
-impl TryFrom<[u8; RESPONSE_DATA_LEN]> for ResponseData {
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl TryFrom<ResponseDataRaw> for ResponseData {
     type Error = InvalidResponseData;
 
-    fn try_from(data: [u8; RESPONSE_DATA_LEN]) -> Result<Self, Self::Error> {
-        let raw = ResponseDataRaw(data);
+    fn try_from(data: ResponseDataRaw) -> Result<Self, Self::Error> {
+        let raw = ResponseBitsRaw(data.bits);
 
         let status_change = ConnectorStatusChange::from(raw.status_change());
         let connect_status = raw.connect_status();
@@ -691,11 +645,11 @@ impl TryFrom<[u8; RESPONSE_DATA_LEN]> for ResponseData {
     }
 }
 
-impl From<ResponseData> for [u8; RESPONSE_DATA_LEN] {
+impl From<ResponseData> for ResponseDataRaw {
     fn from(data: ResponseData) -> Self {
-        let mut raw = ResponseDataRaw([0; RESPONSE_DATA_LEN]);
+        let mut raw = ResponseBitsRaw([0; RESPONSE_DATA_LEN]);
 
-        raw.set_status_change(data.status_change.0 .0);
+        raw.set_status_change(data.status_change.into());
         raw.set_connect_status(data.connect_status);
 
         if let Some(status) = data.status {
@@ -716,61 +670,26 @@ impl From<ResponseData> for [u8; RESPONSE_DATA_LEN] {
             }
 
             if let Some(provider_caps_limited) = status.provider_caps_limited {
-                raw.set_provider_caps_limited(provider_caps_limited.0 .0);
+                raw.set_provider_caps_limited(provider_caps_limited.into());
             }
 
             if let Some(bcd_pd_version) = status.bcd_pd_version {
                 raw.set_bcd_pd_version(bcd_pd_version);
             }
         }
-        raw.0
-    }
-}
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        <[u8; RESPONSE_DATA_LEN]>::from(*self).encode(encoder)
-    }
-}
-
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let raw = <[u8; RESPONSE_DATA_LEN]>::decode(decoder)?;
-        let data = ResponseData::try_from(raw)?;
-        Ok(data)
-    }
-}
-/// GET_CONNECTOR_STATUS command arguments
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args;
-
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
-    }
-}
-
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Self)
+        Self { bits: raw.0 }
     }
 }
 
 #[cfg(test)]
 pub mod test {
-    use bincode::config::standard;
-    use bincode::{decode_from_slice, encode_into_slice};
-
     use super::*;
 
     /// Create standard response data for testing
     pub fn create_response_data() -> (ResponseData, [u8; RESPONSE_DATA_LEN]) {
         let response_data = ResponseData {
-            status_change: ConnectorStatusChange::from(0x8001),
+            status_change: ConnectorStatusChange::from(0x8002),
             connect_status: true,
             status: Some(ConnectedStatus {
                 power_op_mode: PowerOperationMode::Pd,
@@ -788,7 +707,7 @@ pub mod test {
         // Status changed flags - 2 bytes
         // Set lowest and highest non-reserved bits
         // Corresponds to external supply change + error
-        bytes[0] = 0x1;
+        bytes[0] = 0x2;
         bytes[1] = 0x80;
 
         // Various status flags - 1 byte
@@ -822,19 +741,28 @@ pub mod test {
     }
 
     #[test]
-    fn test_decode_response_data() {
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        let encoded: [u8; ArgsRaw::LEN] = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let raw = ArgsRaw::from(3);
+
+        assert_eq!(bytemuck::must_cast::<_, [u8; ArgsRaw::LEN]>(raw), encoded);
+        assert_eq!(u8::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), 3);
+    }
+
+    #[test]
+    fn test_response_data_roundtrip() {
         let (expected, bytes) = create_response_data();
 
-        let (response_data, consumed): (ResponseData, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
+        let raw = bytemuck::must_cast::<_, ResponseDataRaw>(bytes);
+        assert_eq!(ResponseData::try_from(raw), Ok(expected));
 
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(response_data, expected);
-
-        let mut encoded_bytes = [0u8; RESPONSE_DATA_LEN];
-        let len = encode_into_slice(expected, &mut encoded_bytes, standard().with_fixed_int_encoding()).unwrap();
-
-        assert_eq!(len, RESPONSE_DATA_LEN);
-        assert_eq!(encoded_bytes, bytes);
+        let encoded: [u8; RESPONSE_DATA_LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(encoded, bytes);
     }
 }
