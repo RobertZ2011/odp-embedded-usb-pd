@@ -68,7 +68,7 @@ bitfield! {
     pub bool, cc_comm, set_cc_com: 4;
     /// Failed due to dead battery
     pub bool, dead_battery, set_dead_battery: 5;
-    /// Contract negociation failure
+    /// Contract negotiation failure
     pub bool, contract_failure, set_contract_failure: 6;
     /// Overcurrent
     pub bool, overcurrent, set_overcurrent: 7;
