@@ -155,8 +155,9 @@ impl<T: PortId> Encode for Command<T> {
                 get_connector_status::Args.encode(encoder)
             }
             CommandData::GetConnectorCapability => {
-                raw_port.encode(encoder)?;
-                get_connector_capability::Args.encode(encoder)
+                let bytes: [u8; get_connector_capability::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_connector_capability::ArgsRaw::from(raw_port));
+                bytes.encode(encoder)
             }
             CommandData::SetPowerLevel(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
@@ -249,9 +250,8 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
                 })
             }
             CommandType::GetConnectorCapability => {
-                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
-                // Don't actually have any args, but need to consume command padding
-                let _args = get_connector_capability::Args::decode(decoder)?;
+                let bytes = <[u8; get_connector_capability::ArgsRaw::LEN]>::decode(decoder)?;
+                let connector_number = u8::from(bytemuck::must_cast::<_, get_connector_capability::ArgsRaw>(bytes));
                 Ok(Command {
                     port: From::from(connector_number),
                     operation: CommandData::GetConnectorCapability,
@@ -411,7 +411,11 @@ impl Encode for ResponseData {
         match self {
             ResponseData::ConnectorReset => Ok(()), // No response data
             ResponseData::GetConnectorStatus(data) => data.encode(encoder),
-            ResponseData::GetConnectorCapability(data) => data.encode(encoder),
+            ResponseData::GetConnectorCapability(data) => {
+                let bytes: [u8; get_connector_capability::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_connector_capability::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
             ResponseData::GetErrorStatus(data) => data.encode(encoder),
             ResponseData::GetAlternateModes(data) => {
                 let bytes: [u8; get_alternate_modes::ResponseDataRaw::LEN] =
@@ -456,9 +460,12 @@ impl Decode<CommandType> for ResponseData {
             CommandType::GetConnectorStatus => Ok(ResponseData::GetConnectorStatus(
                 get_connector_status::ResponseData::decode(decoder)?,
             )),
-            CommandType::GetConnectorCapability => Ok(ResponseData::GetConnectorCapability(
-                get_connector_capability::ResponseData::decode(decoder)?,
-            )),
+            CommandType::GetConnectorCapability => {
+                let bytes = <[u8; get_connector_capability::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetConnectorCapability(
+                    bytemuck::must_cast::<_, get_connector_capability::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             CommandType::GetErrorStatus => Ok(ResponseData::GetErrorStatus(get_error_status::ResponseData::decode(
                 decoder,
             )?)),
