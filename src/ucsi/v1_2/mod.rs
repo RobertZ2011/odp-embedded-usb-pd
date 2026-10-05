@@ -197,47 +197,38 @@ impl<T: PortId> Command<T> {
             Command::LpmCommand(cmd) => cmd.command_type(),
         }
     }
+}
 
-    /// Converts this command into its raw bytes
-    pub fn to_bytes(&self) -> Result<[u8; COMMAND_LEN], InvalidCommand> {
-        let payload = match self {
-            Command::PpmCommand(cmd) => cmd.to_payload(),
-            Command::LpmCommand(cmd) => cmd.to_payload()?,
-        };
+impl<T: PortId> TryFrom<Command<T>> for CommandRaw {
+    type Error = InvalidCommand;
 
-        Ok(bytemuck::must_cast(CommandRaw {
-            command: self.command_type().into(),
-            // Data length is only non-zero for vendor-defined commands, none of which are modelled here
-            data_len: 0,
-            payload,
-        }))
+    /// Converts a command into its raw wire format
+    ///
+    /// Returns an error if the arguments cannot be represented on the wire.
+    fn try_from(command: Command<T>) -> Result<Self, Self::Error> {
+        match command {
+            Command::PpmCommand(cmd) => Ok(CommandRaw::from(cmd)),
+            Command::LpmCommand(cmd) => Ok(CommandRaw::try_from(cmd)?),
+        }
     }
+}
 
-    /// Reconstructs a command from its raw bytes
+impl<T: PortId> TryFrom<CommandRaw> for Command<T> {
+    type Error = InvalidCommand;
+
+    /// Reconstructs a command from its raw wire format
     ///
     /// The data length in the header is ignored, every modelled command has a fixed-size payload.
-    pub fn from_bytes(bytes: [u8; COMMAND_LEN]) -> Result<Self, InvalidCommand> {
-        let raw = bytemuck::must_cast::<_, CommandRaw>(bytes);
-        let header = CommandHeader::try_from(CommandHeaderRaw {
-            command: raw.command,
-            data_len: raw.data_len,
-        })?;
-
-        match header.command {
+    fn try_from(raw: CommandRaw) -> Result<Self, Self::Error> {
+        match CommandType::try_from(raw.command)? {
             // PPM commands
-            command_type @ (CommandType::PpmReset
+            CommandType::PpmReset
             | CommandType::Cancel
             | CommandType::GetCapability
             | CommandType::AckCcCi
-            | CommandType::SetNotificationEnable) => Ok(Command::PpmCommand(ppm::Command::from_payload(
-                command_type,
-                raw.payload,
-            )?)),
+            | CommandType::SetNotificationEnable => Ok(Command::PpmCommand(ppm::Command::try_from(raw)?)),
             // All other commands are LPM commands
-            command_type => Ok(Command::LpmCommand(lpm::Command::from_payload(
-                command_type,
-                raw.payload,
-            )?)),
+            _ => Ok(Command::LpmCommand(lpm::Command::try_from(raw)?)),
         }
     }
 }
@@ -293,18 +284,32 @@ impl ResponseData {
         }
     }
 
-    /// Converts this response data into raw bytes
-    ///
-    /// Returns a [`Self::MAX_LEN`] sized buffer along with the number of valid bytes at its start.
-    pub fn to_bytes(&self) -> ([u8; Self::MAX_LEN], usize) {
+    /// Number of valid bytes this response data occupies on the wire
+    pub fn data_len(&self) -> usize {
         match self {
-            ResponseData::Ppm(data) => data.to_bytes(),
-            ResponseData::Lpm(data) => data.to_bytes(),
+            ResponseData::Ppm(data) => data.data_len(),
+            ResponseData::Lpm(data) => data.data_len(),
         }
     }
+}
+
+impl From<ResponseData> for [u8; ResponseData::MAX_LEN] {
+    /// Converts response data into a [`ResponseData::MAX_LEN`] sized buffer
+    ///
+    /// Only the first [`ResponseData::data_len`] bytes are valid.
+    fn from(data: ResponseData) -> Self {
+        match data {
+            ResponseData::Ppm(data) => data.into(),
+            ResponseData::Lpm(data) => data.into(),
+        }
+    }
+}
+
+impl TryFrom<(CommandType, [u8; ResponseData::MAX_LEN])> for ResponseData {
+    type Error = InvalidResponseData;
 
     /// Reconstructs response data from its command type and raw bytes
-    pub fn from_bytes(command_type: CommandType, bytes: [u8; Self::MAX_LEN]) -> Result<Self, InvalidResponseData> {
+    fn try_from((command_type, bytes): (CommandType, [u8; ResponseData::MAX_LEN])) -> Result<Self, Self::Error> {
         match command_type {
             // PPM commands
             CommandType::PpmReset
@@ -312,10 +317,10 @@ impl ResponseData {
             | CommandType::GetCapability
             | CommandType::AckCcCi
             | CommandType::SetNotificationEnable => {
-                Ok(ResponseData::Ppm(ppm::ResponseData::from_bytes(command_type, bytes)?))
+                Ok(ResponseData::Ppm(ppm::ResponseData::try_from((command_type, bytes))?))
             }
             // All other commands are LPM commands
-            _ => Ok(ResponseData::Lpm(lpm::ResponseData::from_bytes(command_type, bytes)?)),
+            _ => Ok(ResponseData::Lpm(lpm::ResponseData::try_from((command_type, bytes))?)),
         }
     }
 }
@@ -364,33 +369,36 @@ impl<T: PortId> Response<T> {
     /// Length of a response in bytes
     pub const LEN: usize = ResponseRaw::LEN;
 
-    /// Converts this response into raw bytes
+    /// Number of valid bytes this response occupies on the wire
     ///
-    /// Returns a [`Self::LEN`] sized buffer along with the number of valid bytes at its start. The
-    /// valid length covers the CCI plus however much response data the command produced.
-    pub fn to_bytes(&self) -> ([u8; RESPONSE_LEN], usize) {
-        let (data, data_len) = match self.data {
-            Some(data) => data.to_bytes(),
-            None => ([0u8; ResponseData::MAX_LEN], 0),
-        };
-
-        (
-            bytemuck::must_cast(ResponseRaw {
-                cci: U32LE::new(self.cci.into()),
-                data,
-            }),
-            size_of::<U32LE>() + data_len,
-        )
+    /// Covers the CCI plus however much response data the command produced.
+    pub fn valid_len(&self) -> usize {
+        size_of::<U32LE>() + self.data.map_or(0, |data| data.data_len())
     }
+}
 
-    /// Reconstructs a response from its command type and raw bytes
+impl<T: PortId> From<Response<T>> for ResponseRaw {
+    /// Converts a response into its raw wire format
+    ///
+    /// Only the first [`Response::valid_len`] bytes are valid.
+    fn from(response: Response<T>) -> Self {
+        ResponseRaw {
+            cci: U32LE::new(response.cci.into()),
+            data: response.data.map_or([0u8; ResponseData::MAX_LEN], Into::into),
+        }
+    }
+}
+
+impl<T: PortId> TryFrom<(CommandType, ResponseRaw)> for Response<T> {
+    type Error = InvalidResponseData;
+
+    /// Reconstructs a response from its command type and raw wire format
     ///
     /// The command type is needed because a response carries no indication of which command
     /// produced it. Response data is only decoded for commands that produce it.
-    pub fn from_bytes(command_type: CommandType, bytes: [u8; RESPONSE_LEN]) -> Result<Self, InvalidResponseData> {
-        let raw = bytemuck::must_cast::<_, ResponseRaw>(bytes);
+    fn try_from((command_type, raw): (CommandType, ResponseRaw)) -> Result<Self, Self::Error> {
         let data = if command_type.has_response() {
-            Some(ResponseData::from_bytes(command_type, raw.data)?)
+            Some(ResponseData::try_from((command_type, raw.data))?)
         } else {
             None
         };
@@ -524,8 +532,10 @@ mod tests {
             ack: ppm::ack_cc_ci::Ack::from(0x2),
         }));
 
-        assert_eq!(Command::from_bytes(bytes), Ok(expected));
-        assert_eq!(expected.to_bytes(), Ok(bytes));
+        let raw = bytemuck::must_cast::<_, CommandRaw>(bytes);
+
+        assert_eq!(Command::try_from(raw), Ok(expected));
+        assert_eq!(CommandRaw::try_from(expected), Ok(raw));
     }
 
     /// Test LPM command round-tripping
@@ -539,16 +549,16 @@ mod tests {
 
         let expected = Command::LpmCommand(lpm::Command::new(GlobalPortId(1), lpm::CommandData::GetConnectorStatus));
 
-        assert_eq!(Command::from_bytes(bytes), Ok(expected));
-        assert_eq!(expected.to_bytes(), Ok(bytes));
+        let raw = bytemuck::must_cast::<_, CommandRaw>(bytes);
+
+        assert_eq!(Command::try_from(raw), Ok(expected));
+        assert_eq!(CommandRaw::try_from(expected), Ok(raw));
     }
 
     #[test]
-    fn test_command_from_bytes_invalid_command_type() {
-        let bytes = [0u8; COMMAND_LEN];
-
+    fn test_command_from_raw_invalid_command_type() {
         assert_eq!(
-            GlobalCommand::from_bytes(bytes),
+            GlobalCommand::try_from(CommandRaw::default()),
             Err(InvalidCommand::InvalidCommandType(InvalidCommandType(0)))
         );
     }
@@ -564,18 +574,19 @@ mod tests {
             data: Some(ResponseData::Ppm(ppm::ResponseData::GetCapability(response_data))),
         };
 
-        let (encoded_bytes, len) = expected.to_bytes();
+        let raw = ResponseRaw::from(expected);
+        let encoded_bytes = bytemuck::must_cast::<_, [u8; RESPONSE_LEN]>(raw);
 
-        assert_eq!(len, size_of::<U32LE>() + ppm::get_capability::RESPONSE_DATA_LEN);
+        assert_eq!(
+            expected.valid_len(),
+            size_of::<U32LE>() + ppm::get_capability::RESPONSE_DATA_LEN
+        );
         assert_eq!(
             encoded_bytes.get(..size_of::<U32LE>()).unwrap(),
             u32::from(expected.cci).to_le_bytes()
         );
         assert_eq!(encoded_bytes.get(size_of::<U32LE>()..).unwrap(), bytes);
-        assert_eq!(
-            Response::from_bytes(CommandType::GetCapability, encoded_bytes),
-            Ok(expected)
-        );
+        assert_eq!(Response::try_from((CommandType::GetCapability, raw)), Ok(expected));
     }
 
     /// Test LPM response encoding
@@ -589,19 +600,20 @@ mod tests {
             data: Some(ResponseData::Lpm(lpm::ResponseData::GetConnectorStatus(response_data))),
         };
 
-        let (encoded_bytes, len) = expected.to_bytes();
+        let raw = ResponseRaw::from(expected);
+        let encoded_bytes = bytemuck::must_cast::<_, [u8; RESPONSE_LEN]>(raw);
 
-        assert_eq!(len, size_of::<U32LE>() + lpm::get_connector_status::RESPONSE_DATA_LEN);
+        assert_eq!(
+            expected.valid_len(),
+            size_of::<U32LE>() + lpm::get_connector_status::RESPONSE_DATA_LEN
+        );
         assert_eq!(
             encoded_bytes
                 .get(size_of::<U32LE>()..size_of::<U32LE>() + lpm::get_connector_status::RESPONSE_DATA_LEN)
                 .unwrap(),
             bytes
         );
-        assert_eq!(
-            Response::from_bytes(CommandType::GetConnectorStatus, encoded_bytes),
-            Ok(expected)
-        );
+        assert_eq!(Response::try_from((CommandType::GetConnectorStatus, raw)), Ok(expected));
     }
 
     /// Commands without response data produce a CCI-only response
@@ -612,10 +624,10 @@ mod tests {
             data: None,
         };
 
-        let (bytes, len) = expected.to_bytes();
+        let raw = ResponseRaw::from(expected);
 
-        assert_eq!(len, size_of::<U32LE>());
-        assert_eq!(Response::from_bytes(CommandType::AckCcCi, bytes), Ok(expected));
+        assert_eq!(expected.valid_len(), size_of::<U32LE>());
+        assert_eq!(Response::try_from((CommandType::AckCcCi, raw)), Ok(expected));
     }
 
     /// Every defined command type round-trips through the raw header, preserving the data length
