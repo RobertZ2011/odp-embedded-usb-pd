@@ -196,8 +196,9 @@ impl<T: PortId> Encode for Command<T> {
                 bytes.encode(encoder)
             }
             CommandData::GetCamSupported => {
-                raw_port.encode(encoder)?;
-                get_cam_supported::Args.encode(encoder)
+                let bytes: [u8; get_cam_supported::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_cam_supported::ArgsRaw::from(raw_port));
+                bytes.encode(encoder)
             }
             CommandData::GetCurrentCam => {
                 raw_port.encode(encoder)?;
@@ -325,9 +326,8 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
                 })
             }
             CommandType::GetCamSupported => {
-                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
-                // Don't actually have any args, but need to consume command padding
-                let _args = get_cam_supported::Args::decode(decoder)?;
+                let bytes = <[u8; get_cam_supported::ArgsRaw::LEN]>::decode(decoder)?;
+                let connector_number = u8::from(bytemuck::must_cast::<_, get_cam_supported::ArgsRaw>(bytes));
                 Ok(Command {
                     port: From::from(connector_number),
                     operation: CommandData::GetCamSupported,
@@ -418,7 +418,11 @@ impl Encode for ResponseData {
                     bytemuck::must_cast(get_alternate_modes::ResponseDataRaw::from(*data));
                 bytes.encode(encoder)
             }
-            ResponseData::GetCamSupported(data) => data.encode(encoder),
+            ResponseData::GetCamSupported(data) => {
+                let bytes: [u8; get_cam_supported::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_cam_supported::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
             ResponseData::GetCurrentCam(data) => data.encode(encoder),
             ResponseData::GetPdos(data) => {
                 // Only the valid PDOs are sent, the response is shorter than the raw type when fewer are present
@@ -456,9 +460,12 @@ impl Decode<CommandType> for ResponseData {
                     bytemuck::must_cast::<_, get_alternate_modes::ResponseDataRaw>(bytes).into(),
                 ))
             }
-            CommandType::GetCamSupported => Ok(ResponseData::GetCamSupported(get_cam_supported::ResponseData::decode(
-                decoder,
-            )?)),
+            CommandType::GetCamSupported => {
+                let bytes = <[u8; get_cam_supported::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetCamSupported(
+                    bytemuck::must_cast::<_, get_cam_supported::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             CommandType::GetCurrentCam => Ok(ResponseData::GetCurrentCam(get_current_cam::ResponseData::decode(
                 decoder,
             )?)),
