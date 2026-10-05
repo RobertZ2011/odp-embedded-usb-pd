@@ -167,10 +167,104 @@ impl<Context, T: PortId> Decode<Context> for Command<T> {
                 Ok(Command::PpmCommand(command))
             }
             // All other commands are LPM commands
-            _ => {
-                let command = lpm::Command::decode(&mut decoder.with_context(header))?;
+            command_type => {
+                let payload: [u8; lpm::COMMAND_PAYLOAD_LEN] = Decode::decode(decoder)?;
+                let command = lpm::Command::from_payload(command_type, payload)?;
                 Ok(Command::LpmCommand(command))
             }
+        }
+    }
+}
+
+impl From<lpm::InvalidRecipient> for DecodeError {
+    fn from(value: lpm::InvalidRecipient) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "Recipient",
+            allowed: &AllowedEnumVariants::Allowed(&[
+                lpm::Recipient::Connector as u32,
+                lpm::Recipient::Sop as u32,
+                lpm::Recipient::SopP as u32,
+                lpm::Recipient::SopPp as u32,
+            ]),
+            found: value.0 as u32,
+        }
+    }
+}
+
+impl From<lpm::get_pdos::InvalidSourceCapabilityType> for DecodeError {
+    fn from(value: lpm::get_pdos::InvalidSourceCapabilityType) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "SourceCapabilityType",
+            allowed: &AllowedEnumVariants::Allowed(&[
+                lpm::get_pdos::SourceCapabilityType::Current as u32,
+                lpm::get_pdos::SourceCapabilityType::Advertised as u32,
+                lpm::get_pdos::SourceCapabilityType::Maximum as u32,
+            ]),
+            found: value.0 as u32,
+        }
+    }
+}
+
+impl From<lpm::get_pd_message::InvalidMessageType> for DecodeError {
+    fn from(value: lpm::get_pd_message::InvalidMessageType) -> Self {
+        DecodeError::UnexpectedVariant {
+            type_name: "MessageType",
+            allowed: &AllowedEnumVariants::Allowed(&[
+                lpm::get_pd_message::MessageType::SinkCapExtended as u32,
+                lpm::get_pd_message::MessageType::SourceCapExtended as u32,
+                lpm::get_pd_message::MessageType::BatteryCap as u32,
+                lpm::get_pd_message::MessageType::BatteryStatus as u32,
+                lpm::get_pd_message::MessageType::DiscoverIdentity as u32,
+            ]),
+            found: value.0 as u32,
+        }
+    }
+}
+
+impl From<lpm::get_pd_message::InvalidArgs> for DecodeError {
+    fn from(value: lpm::get_pd_message::InvalidArgs) -> Self {
+        match value {
+            lpm::get_pd_message::InvalidArgs::InvalidRecipient(err) => err.into(),
+            lpm::get_pd_message::InvalidArgs::InvalidMessageType(err) => err.into(),
+        }
+    }
+}
+
+impl From<lpm::InvalidCommand> for DecodeError {
+    fn from(value: lpm::InvalidCommand) -> Self {
+        match value {
+            lpm::InvalidCommand::InvalidCommandType(err) => DecodeError::UnexpectedVariant {
+                type_name: "CommandType",
+                allowed: &AllowedEnumVariants::Allowed(&[
+                    CommandType::ConnectorReset as u32,
+                    CommandType::GetConnectorCapability as u32,
+                    CommandType::SetCcom as u32,
+                    CommandType::SetUor as u32,
+                    CommandType::SetPdr as u32,
+                    CommandType::GetAlternateModes as u32,
+                    CommandType::GetCamSupported as u32,
+                    CommandType::GetCurrentCam as u32,
+                    CommandType::SetNewCam as u32,
+                    CommandType::GetPdos as u32,
+                    CommandType::GetCableProperty as u32,
+                    CommandType::GetConnectorStatus as u32,
+                    CommandType::GetErrorStatus as u32,
+                    CommandType::SetPowerLevel as u32,
+                    CommandType::GetPdMessage as u32,
+                ]),
+                found: err.0 as u32,
+            },
+            lpm::InvalidCommand::InvalidCurrent(err) => DecodeError::UnexpectedVariant {
+                type_name: "Current",
+                allowed: &AllowedEnumVariants::Range { min: 0, max: 3 },
+                found: err.0 as u32,
+            },
+            lpm::InvalidCommand::InvalidRecipient(err) => err.into(),
+            lpm::InvalidCommand::InvalidSourceCapabilityType(err) => err.into(),
+            lpm::InvalidCommand::InvalidPdMessageArgs(err) => err.into(),
+            // These errors can only be produced when converting a command to its payload
+            lpm::InvalidCommand::Overflow(_) => DecodeError::Other("Argument overflow"),
+            lpm::InvalidCommand::InvalidNumPdos(_) => DecodeError::Other("Invalid number of PDOs"),
         }
     }
 }
@@ -199,7 +293,12 @@ impl Encode for ResponseData {
                     .writer()
                     .write(bytes.get(..len).ok_or(EncodeError::UnexpectedEnd)?)
             }
-            ResponseData::Lpm(resp) => resp.encode(encoder),
+            ResponseData::Lpm(resp) => {
+                let (bytes, len) = resp.to_bytes();
+                encoder
+                    .writer()
+                    .write(bytes.get(..len).ok_or(EncodeError::UnexpectedEnd)?)
+            }
         }
     }
 }

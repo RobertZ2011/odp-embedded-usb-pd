@@ -1,41 +1,59 @@
-use bincode::de::{Decode, Decoder};
-use bincode::enc::{Encode, Encoder};
-use bincode::error::{DecodeError, EncodeError};
-use bitfield::bitfield;
+//! Types for GET_ERROR_STATUS command, see UCSI spec 6.5.17
 
+use bitfield::bitfield;
+use bytemuck::{Pod, Zeroable};
+use pack1::U16LE;
+
+use crate::ucsi::v1_2::lpm::ConnectorNumberRaw;
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 
 /// Data length for the GET_CONNECTOR_STATUS command response
 pub const RESPONSE_DATA_LEN: usize = MAX_VENDOR_DATA_LEN + size_of::<InformationRaw>();
-/// Command padding, -1 for the connector number byte
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - 1;
+/// Command padding
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ConnectorNumberRaw>();
 
 /// Maximum support vendor-data length
 pub const MAX_VENDOR_DATA_LEN: usize = 14;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Raw wire format of the command arguments
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args;
+pub struct ArgsRaw {
+    /// Connector number in bits 6:0
+    pub connector: u8,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl From<u8> for ArgsRaw {
+    /// Creates raw arguments for the given connector number
+    fn from(connector_number: u8) -> Self {
+        let mut connector = ConnectorNumberRaw::default();
+        connector.set_connector_number(connector_number);
+        Self {
+            connector: connector.0,
+            ..Default::default()
+        }
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Self)
+impl From<ArgsRaw> for u8 {
+    /// Returns the connector number
+    fn from(raw: ArgsRaw) -> Self {
+        ConnectorNumberRaw(raw.connector).connector_number()
     }
 }
 
 bitfield! {
     /// Raw error bitfield
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct InformationRaw(u16);
+    pub struct InformationRaw(u16);
     impl Debug;
 
     /// Unrecognized command
@@ -50,7 +68,7 @@ bitfield! {
     pub bool, cc_comm, set_cc_com: 4;
     /// Failed due to dead battery
     pub bool, dead_battery, set_dead_battery: 5;
-    /// Contract negociation failure
+    /// Contract negotiation failure
     pub bool, contract_failure, set_contract_failure: 6;
     /// Overcurrent
     pub bool, overcurrent, set_overcurrent: 7;
@@ -111,162 +129,95 @@ impl defmt::Format for InformationRaw {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Error information flags
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Information(InformationRaw);
+pub struct Information {
+    /// Unrecognized command
+    pub unrecognized_command: bool,
+    /// Invalid connector number
+    pub invalid_connector: bool,
+    /// Invalid command arguments
+    pub invalid_command_args: bool,
+    /// Incompatible partner
+    pub incompatible_partner: bool,
+    /// CC communication error
+    pub cc_comm: bool,
+    /// Failed due to dead battery
+    pub dead_battery: bool,
+    /// Contract negociation failure
+    pub contract_failure: bool,
+    /// Overcurrent
+    pub overcurrent: bool,
+    /// Undefined
+    pub undefined: bool,
+    /// Swap rejected by port partner
+    pub port_partner_rejected_swap: bool,
+    /// Hard reset
+    pub hard_reset: bool,
+    /// PPM policy conflict
+    pub ppm_policy_conflict: bool,
+    /// Swap rejected
+    pub swap_rejected: bool,
+    /// Reverse current protection
+    pub reverse_current_protection: bool,
+    /// Set sink path rejected
+    pub sink_path_rejected: bool,
+}
 
-impl Information {
-    pub fn unrecognized_command(&self) -> bool {
-        self.0.unrecognized_command()
-    }
-
-    pub fn set_unrecognized_command(&mut self, value: bool) -> &mut Self {
-        self.0.set_unrecognized_command(value);
-        self
-    }
-
-    pub fn invalid_connector(&self) -> bool {
-        self.0.invalid_connector()
-    }
-
-    pub fn set_invalid_connector(&mut self, value: bool) -> &mut Self {
-        self.0.set_invalid_connector(value);
-        self
-    }
-
-    pub fn invalid_command_args(&self) -> bool {
-        self.0.invalid_command_args()
-    }
-
-    pub fn set_invalid_command_args(&mut self, value: bool) -> &mut Self {
-        self.0.set_invalid_command_args(value);
-        self
-    }
-
-    pub fn incompatible_partner(&self) -> bool {
-        self.0.incompatible_partner()
-    }
-
-    pub fn set_incompatible_partner(&mut self, value: bool) -> &mut Self {
-        self.0.set_incompatible_partner(value);
-        self
-    }
-
-    pub fn cc_comm(&self) -> bool {
-        self.0.cc_comm()
-    }
-
-    pub fn set_cc_comm(&mut self, value: bool) -> &mut Self {
-        self.0.set_cc_com(value);
-        self
-    }
-
-    pub fn dead_battery(&self) -> bool {
-        self.0.dead_battery()
-    }
-
-    pub fn set_dead_battery(&mut self, value: bool) -> &mut Self {
-        self.0.set_dead_battery(value);
-        self
-    }
-
-    pub fn contract_failure(&self) -> bool {
-        self.0.contract_failure()
-    }
-
-    pub fn set_contract_failure(&mut self, value: bool) -> &mut Self {
-        self.0.set_contract_failure(value);
-        self
-    }
-
-    pub fn overcurrent(&self) -> bool {
-        self.0.overcurrent()
-    }
-
-    pub fn set_overcurrent(&mut self, value: bool) -> &mut Self {
-        self.0.set_overcurrent(value);
-        self
-    }
-
-    pub fn undefined(&self) -> bool {
-        self.0.undefined()
-    }
-
-    pub fn set_undefined(&mut self, value: bool) -> &mut Self {
-        self.0.set_undefined(value);
-        self
-    }
-
-    pub fn port_partner_rejected_swap(&self) -> bool {
-        self.0.port_partner_rejected_swap()
-    }
-
-    pub fn set_port_partner_rejected_swap(&mut self, value: bool) -> &mut Self {
-        self.0.set_port_partner_rejected_swap(value);
-        self
-    }
-
-    pub fn hard_reset(&self) -> bool {
-        self.0.hard_reset()
-    }
-
-    pub fn set_hard_reset(&mut self, value: bool) -> &mut Self {
-        self.0.set_hard_reset(value);
-        self
-    }
-
-    pub fn ppm_policy_conflict(&self) -> bool {
-        self.0.ppm_policy_conflict()
-    }
-
-    pub fn set_ppm_policy_conflict(&mut self, value: bool) -> &mut Self {
-        self.0.set_ppm_policy_conflict(value);
-        self
-    }
-
-    pub fn swap_rejected(&self) -> bool {
-        self.0.swap_rejected()
-    }
-
-    pub fn set_swap_rejected(&mut self, value: bool) -> &mut Self {
-        self.0.set_swap_rejected(value);
-        self
-    }
-
-    pub fn reverse_current_protection(&self) -> bool {
-        self.0.reverse_current_protection()
-    }
-
-    pub fn set_reverse_current_protection(&mut self, value: bool) -> &mut Self {
-        self.0.set_reverse_current_protection(value);
-        self
-    }
-
-    pub fn sink_path_rejected(&self) -> bool {
-        self.0.sink_path_rejected()
-    }
-
-    pub fn set_sink_path_rejected(&mut self, value: bool) -> &mut Self {
-        self.0.set_sink_path_rejected(value);
-        self
+impl From<InformationRaw> for Information {
+    fn from(raw: InformationRaw) -> Self {
+        Self {
+            unrecognized_command: raw.unrecognized_command(),
+            invalid_connector: raw.invalid_connector(),
+            invalid_command_args: raw.invalid_command_args(),
+            incompatible_partner: raw.incompatible_partner(),
+            cc_comm: raw.cc_comm(),
+            dead_battery: raw.dead_battery(),
+            contract_failure: raw.contract_failure(),
+            overcurrent: raw.overcurrent(),
+            undefined: raw.undefined(),
+            port_partner_rejected_swap: raw.port_partner_rejected_swap(),
+            hard_reset: raw.hard_reset(),
+            ppm_policy_conflict: raw.ppm_policy_conflict(),
+            swap_rejected: raw.swap_rejected(),
+            reverse_current_protection: raw.reverse_current_protection(),
+            sink_path_rejected: raw.sink_path_rejected(),
+        }
     }
 }
 
-impl Default for Information {
-    fn default() -> Self {
-        Self(InformationRaw(0))
+impl From<Information> for InformationRaw {
+    fn from(info: Information) -> Self {
+        let mut raw = InformationRaw(0);
+        raw.set_unrecognized_command(info.unrecognized_command);
+        raw.set_invalid_connector(info.invalid_connector);
+        raw.set_invalid_command_args(info.invalid_command_args);
+        raw.set_incompatible_partner(info.incompatible_partner);
+        raw.set_cc_com(info.cc_comm);
+        raw.set_dead_battery(info.dead_battery);
+        raw.set_contract_failure(info.contract_failure);
+        raw.set_overcurrent(info.overcurrent);
+        raw.set_undefined(info.undefined);
+        raw.set_port_partner_rejected_swap(info.port_partner_rejected_swap);
+        raw.set_hard_reset(info.hard_reset);
+        raw.set_ppm_policy_conflict(info.ppm_policy_conflict);
+        raw.set_swap_rejected(info.swap_rejected);
+        raw.set_reverse_current_protection(info.reverse_current_protection);
+        raw.set_sink_path_rejected(info.sink_path_rejected);
+        raw
     }
 }
 
 impl From<u16> for Information {
     fn from(value: u16) -> Self {
-        Self(InformationRaw(value))
+        InformationRaw(value).into()
     }
 }
 
 impl From<Information> for u16 {
     fn from(info: Information) -> Self {
-        info.0 .0
+        InformationRaw::from(info).0
     }
 }
 
@@ -280,68 +231,105 @@ pub struct ResponseData {
     pub vendor: [u8; MAX_VENDOR_DATA_LEN],
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        u16::encode(&self.information.into(), encoder)?;
-        self.vendor.encode(encoder)?;
-        Ok(())
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ResponseDataRaw {
+    /// Error information bits, see [`InformationRaw`]
+    pub information: U16LE,
+    /// Vendor-specific error information
+    pub vendor: [u8; MAX_VENDOR_DATA_LEN],
+}
+
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ResponseDataRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "ResponseDataRaw {{ information: {}, vendor: {} }}",
+            InformationRaw(self.information.get()),
+            self.vendor
+        )
     }
 }
 
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        let information = Information::from(u16::decode(decoder)?);
-        let vendor = <[u8; MAX_VENDOR_DATA_LEN]>::decode(decoder)?;
-        Ok(ResponseData { information, vendor })
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        Self {
+            information: raw.information.get().into(),
+            vendor: raw.vendor,
+        }
+    }
+}
+
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        Self {
+            information: U16LE::new(data.information.into()),
+            vendor: data.vendor,
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use bincode::config::standard;
-    use bincode::{decode_from_slice, encode_into_slice};
-
     use super::*;
 
+    /// Mask of all bits defined by [`InformationRaw`]
+    const DEFINED_BITS: u16 = 0x7FFF;
+
     #[test]
-    fn test_encode_response_data() {
-        let mut bytes = [0u8; RESPONSE_DATA_LEN];
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        let encoded: [u8; ArgsRaw::LEN] = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let raw = ArgsRaw::from(3);
+
+        assert_eq!(bytemuck::must_cast::<_, [u8; ArgsRaw::LEN]>(raw), encoded);
+        assert_eq!(u8::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), 3);
+    }
+
+    #[test]
+    fn test_information_roundtrip() {
+        for bit in 0..u16::BITS {
+            let raw = 1u16 << bit;
+            // Undefined bits are dropped by the roundtrip
+            assert_eq!(u16::from(Information::from(raw)), raw & DEFINED_BITS);
+        }
+    }
+
+    #[test]
+    fn test_response_data_roundtrip() {
+        let bytes: [u8; RESPONSE_DATA_LEN] = [
+            0xF0, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+        ];
         let expected = ResponseData {
-            information: *Information::default()
-                .set_cc_comm(true)
-                .set_dead_battery(true)
-                .set_contract_failure(true)
-                .set_overcurrent(true),
+            information: Information {
+                cc_comm: true,
+                dead_battery: true,
+                contract_failure: true,
+                overcurrent: true,
+                ..Default::default()
+            },
             vendor: [
                 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
             ],
         };
 
-        bytes[0] = 0xf0;
-        bytes[2] = 0x11;
-        bytes[3] = 0x22;
-        bytes[4] = 0x33;
-        bytes[5] = 0x44;
-        bytes[6] = 0x55;
-        bytes[7] = 0x66;
-        bytes[8] = 0x77;
-        bytes[9] = 0x88;
-        bytes[10] = 0x99;
-        bytes[11] = 0xAA;
-        bytes[12] = 0xBB;
-        bytes[13] = 0xCC;
-        bytes[14] = 0xDD;
-        bytes[15] = 0xEE;
-
-        let (response_data, consumed): (ResponseData, usize) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).unwrap();
-        assert_eq!(consumed, bytes.len());
-        assert_eq!(response_data, expected);
-
-        let mut encoded_bytes = [0u8; RESPONSE_DATA_LEN];
-        let len = encode_into_slice(expected, &mut encoded_bytes, standard().with_fixed_int_encoding()).unwrap();
-
-        assert_eq!(len, RESPONSE_DATA_LEN);
-        assert_eq!(encoded_bytes, bytes);
+        assert_eq!(
+            ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(bytes)),
+            expected
+        );
+        let encoded: [u8; RESPONSE_DATA_LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(encoded, bytes);
     }
 }

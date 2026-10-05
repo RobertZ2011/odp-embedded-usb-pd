@@ -1,36 +1,48 @@
 //! Types for GET_CAM_SUPPORTED command, see UCSI spec 6.5.12
-use bincode::de::Decoder;
-use bincode::enc::Encoder;
-use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
+use bytemuck::{Pod, Zeroable};
 
+use crate::ucsi::v1_2::lpm::ConnectorNumberRaw;
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
 
 /// Data length for the GET_CAM_SUPPORTED command response
 pub const RESPONSE_DATA_LEN: usize = 1;
 /// Command padding
-// -1 for the connector number byte
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - 1;
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ConnectorNumberRaw>();
 /// Maximum number of alternate modes supported
 pub const MAX_ALT_MODES: usize = 8;
 
-/// Command arguments
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Raw wire format of the command arguments
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args;
+pub struct ArgsRaw {
+    /// Connector number in bits 6:0
+    pub connector: u8,
+    /// Reserved bytes, filling out the remainder of the command
+    _reserved: [u8; COMMAND_PADDING],
+}
 
-impl Encode for Args {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        // Padding to fill the command length
-        [0u8; COMMAND_PADDING].encode(encoder)
+impl ArgsRaw {
+    /// Length of the raw arguments in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl From<u8> for ArgsRaw {
+    /// Creates raw arguments for the given connector number
+    fn from(connector_number: u8) -> Self {
+        let mut connector = ConnectorNumberRaw::default();
+        connector.set_connector_number(connector_number);
+        Self {
+            connector: connector.0,
+            ..Default::default()
+        }
     }
 }
 
-impl<Context> Decode<Context> for Args {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        // Read padding
-        let _padding: [u8; COMMAND_PADDING] = Decode::decode(decoder)?;
-        Ok(Self)
+impl From<ArgsRaw> for u8 {
+    /// Returns the connector number
+    fn from(raw: ArgsRaw) -> Self {
+        ConnectorNumberRaw(raw.connector).connector_number()
     }
 }
 
@@ -38,55 +50,76 @@ impl<Context> Decode<Context> for Args {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResponseData {
-    alt_modes: u8,
+    /// Support flag for each alternate mode
+    pub alt_modes: [bool; MAX_ALT_MODES],
 }
 
-impl ResponseData {
-    pub fn alt_mode_supported(&self, index: usize) -> bool {
-        if index < MAX_ALT_MODES {
-            (self.alt_modes & (1 << index)) != 0
-        } else {
-            false
-        }
-    }
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ResponseDataRaw {
+    /// Bitmap of supported alternate modes
+    pub alt_modes: u8,
+}
 
-    pub fn set_alt_mode_supported(&mut self, index: usize, supported: bool) {
-        if index < MAX_ALT_MODES {
-            if supported {
-                self.alt_modes |= 1 << index;
-            } else {
-                self.alt_modes &= !(1 << index);
+impl ResponseDataRaw {
+    /// Length of the raw response data in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+impl From<ResponseDataRaw> for ResponseData {
+    fn from(raw: ResponseDataRaw) -> Self {
+        let mut data = ResponseData::default();
+        for (index, alt_mode) in data.alt_modes.iter_mut().enumerate() {
+            *alt_mode = (raw.alt_modes & (1 << index)) != 0;
+        }
+        data
+    }
+}
+
+impl From<ResponseData> for ResponseDataRaw {
+    fn from(data: ResponseData) -> Self {
+        let mut alt_modes = 0u8;
+        for (index, supported) in data.alt_modes.iter().enumerate() {
+            if *supported {
+                alt_modes |= 1 << index;
             }
         }
-    }
-}
-
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        self.alt_modes.encode(encoder)
-    }
-}
-
-impl<Context> Decode<Context> for ResponseData {
-    fn decode<D: Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, DecodeError> {
-        u8::decode(decoder).map(|v| ResponseData { alt_modes: v })
+        Self { alt_modes }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use bincode::config::standard;
-    use bincode::decode_from_slice;
-
     use super::*;
 
     #[test]
-    fn test_encode_response_data() {
-        let bytes = [0x12; RESPONSE_DATA_LEN];
-        let expected = ResponseData { alt_modes: 0x12 };
-        let (data, len): (ResponseData, _) =
-            decode_from_slice(&bytes, standard().with_fixed_int_encoding()).expect("Decoding failed");
+    fn test_raw_len() {
+        assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
+        assert_eq!(ResponseDataRaw::LEN, RESPONSE_DATA_LEN);
+    }
+
+    #[test]
+    fn test_args_raw_roundtrip() {
+        let encoded: [u8; ArgsRaw::LEN] = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let raw = ArgsRaw::from(3);
+
+        assert_eq!(bytemuck::must_cast::<_, [u8; ArgsRaw::LEN]>(raw), encoded);
+        assert_eq!(u8::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), 3);
+    }
+
+    #[test]
+    fn test_response_data_roundtrip() {
+        let bytes = [0x12u8; RESPONSE_DATA_LEN];
+        let expected = ResponseData {
+            alt_modes: [false, true, false, false, true, false, false, false],
+        };
+
+        let data = ResponseData::from(bytemuck::must_cast::<_, ResponseDataRaw>(bytes));
         assert_eq!(data, expected);
-        assert_eq!(len, RESPONSE_DATA_LEN);
+
+        let encoded: [u8; RESPONSE_DATA_LEN] = bytemuck::must_cast(ResponseDataRaw::from(expected));
+        assert_eq!(encoded, bytes);
     }
 }

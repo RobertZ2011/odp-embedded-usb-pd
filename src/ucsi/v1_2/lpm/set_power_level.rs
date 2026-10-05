@@ -1,6 +1,5 @@
 //! Types for SET_POWER_LEVEL command, see UCSI spec 6.5.19
 
-use bincode::error::EncodeError;
 use bitfield::bitfield;
 use bytemuck::{Pod, Zeroable};
 
@@ -200,17 +199,6 @@ pub enum OverflowError {
     OperatingCurrentOverflow(u16),
     /// The output voltage value cannot fit in 16 bits
     OutputVoltageOverflow(u32),
-}
-
-// TODO: temporary, remove this once we fully move away from bincode
-impl From<OverflowError> for EncodeError {
-    fn from(val: OverflowError) -> Self {
-        match val {
-            OverflowError::MaxPowerOverflow(_) => EncodeError::Other("Max power overflow"),
-            OverflowError::OperatingCurrentOverflow(_) => EncodeError::Other("Operating current overflow"),
-            OverflowError::OutputVoltageOverflow(_) => EncodeError::Other("Output voltage overflow"),
-        }
-    }
 }
 
 /// Raw wire format of [`Args`]
