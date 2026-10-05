@@ -171,8 +171,9 @@ impl<T: PortId> Encode for Command<T> {
                 bytes.encode(encoder)
             }
             CommandData::GetErrorStatus => {
-                raw_port.encode(encoder)?;
-                get_error_status::Args.encode(encoder)
+                let bytes: [u8; get_error_status::ArgsRaw::LEN] =
+                    bytemuck::must_cast(get_error_status::ArgsRaw::from(raw_port));
+                bytes.encode(encoder)
             }
             CommandData::SetCcom(args) => {
                 // The connector number for this command is combined with its arguments, let it handle everything
@@ -281,9 +282,8 @@ impl<T: PortId> Decode<CommandHeader> for Command<T> {
                 })
             }
             CommandType::GetErrorStatus => {
-                let connector_number = ConnectorNumberRaw::decode(decoder)?.connector_number();
-                // Don't actually have any args, but need to consume command padding
-                let _args = get_error_status::Args::decode(decoder)?;
+                let bytes = <[u8; get_error_status::ArgsRaw::LEN]>::decode(decoder)?;
+                let connector_number = u8::from(bytemuck::must_cast::<_, get_error_status::ArgsRaw>(bytes));
                 Ok(Command {
                     port: From::from(connector_number),
                     operation: CommandData::GetErrorStatus,
@@ -416,7 +416,11 @@ impl Encode for ResponseData {
                     bytemuck::must_cast(get_connector_capability::ResponseDataRaw::from(*data));
                 bytes.encode(encoder)
             }
-            ResponseData::GetErrorStatus(data) => data.encode(encoder),
+            ResponseData::GetErrorStatus(data) => {
+                let bytes: [u8; get_error_status::ResponseDataRaw::LEN] =
+                    bytemuck::must_cast(get_error_status::ResponseDataRaw::from(*data));
+                bytes.encode(encoder)
+            }
             ResponseData::GetAlternateModes(data) => {
                 let bytes: [u8; get_alternate_modes::ResponseDataRaw::LEN] =
                     bytemuck::must_cast(get_alternate_modes::ResponseDataRaw::from(*data));
@@ -466,9 +470,12 @@ impl Decode<CommandType> for ResponseData {
                     bytemuck::must_cast::<_, get_connector_capability::ResponseDataRaw>(bytes).into(),
                 ))
             }
-            CommandType::GetErrorStatus => Ok(ResponseData::GetErrorStatus(get_error_status::ResponseData::decode(
-                decoder,
-            )?)),
+            CommandType::GetErrorStatus => {
+                let bytes = <[u8; get_error_status::ResponseDataRaw::LEN]>::decode(decoder)?;
+                Ok(ResponseData::GetErrorStatus(
+                    bytemuck::must_cast::<_, get_error_status::ResponseDataRaw>(bytes).into(),
+                ))
+            }
             CommandType::GetAlternateModes => {
                 let bytes = <[u8; get_alternate_modes::ResponseDataRaw::LEN]>::decode(decoder)?;
                 Ok(ResponseData::GetAlternateModes(
