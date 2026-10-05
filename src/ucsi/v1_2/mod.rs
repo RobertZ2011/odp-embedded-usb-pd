@@ -1,11 +1,8 @@
 //! UCSI v1.2 implementation, see spec at https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/usb-type-c-ucsi-spec.pdf
 #![allow(missing_docs)]
 
-use bincode::enc::write::Writer;
-use bincode::enc::{Encode, Encoder};
-use bincode::encode_into_slice;
-use bincode::error::EncodeError;
 use bytemuck::{Pod, Zeroable};
+use pack1::U32LE;
 
 use crate::{GlobalPortId, LocalPortId, PdError, PortId};
 
@@ -245,6 +242,34 @@ impl<T: PortId> Command<T> {
     }
 }
 
+/// Error returned when response data cannot be reconstructed from its raw bytes
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum InvalidResponseData {
+    /// Not a valid command type
+    InvalidCommandType(InvalidCommandType),
+    /// Invalid LPM response data
+    Lpm(lpm::InvalidResponseData),
+}
+
+impl From<InvalidCommandType> for InvalidResponseData {
+    fn from(value: InvalidCommandType) -> Self {
+        InvalidResponseData::InvalidCommandType(value)
+    }
+}
+
+impl From<lpm::InvalidResponseData> for InvalidResponseData {
+    fn from(value: lpm::InvalidResponseData) -> Self {
+        InvalidResponseData::Lpm(value)
+    }
+}
+
+impl From<InvalidResponseData> for PdError {
+    fn from(_: InvalidResponseData) -> Self {
+        PdError::InvalidParams
+    }
+}
+
 /// UCSI command response data
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -254,28 +279,74 @@ pub enum ResponseData {
 }
 
 impl ResponseData {
-    /// Encodes the response into a slice
-    pub fn encode_into_slice(&self, bytes: &mut [u8]) -> Result<usize, EncodeError> {
-        encode_into_slice(self, bytes, bincode::config::standard().with_fixed_int_encoding())
+    /// Maximum length in bytes of any response data
+    pub const MAX_LEN: usize = ppm::ResponseData::MAX_LEN;
+
+    /// The PPM and LPM response buffers are forwarded without resizing, so they must be the same size
+    const _MAX_LEN_CHECK: () = assert!(ppm::ResponseData::MAX_LEN == lpm::ResponseData::MAX_LEN);
+
+    /// Returns the command type that produces this response data
+    pub const fn command_type(&self) -> CommandType {
+        match self {
+            ResponseData::Ppm(data) => data.command_type(),
+            ResponseData::Lpm(data) => data.command_type(),
+        }
+    }
+
+    /// Converts this response data into raw bytes
+    ///
+    /// Returns a [`Self::MAX_LEN`] sized buffer along with the number of valid bytes at its start.
+    pub fn to_bytes(&self) -> ([u8; Self::MAX_LEN], usize) {
+        match self {
+            ResponseData::Ppm(data) => data.to_bytes(),
+            ResponseData::Lpm(data) => data.to_bytes(),
+        }
+    }
+
+    /// Reconstructs response data from its command type and raw bytes
+    pub fn from_bytes(command_type: CommandType, bytes: [u8; Self::MAX_LEN]) -> Result<Self, InvalidResponseData> {
+        match command_type {
+            // PPM commands
+            CommandType::PpmReset
+            | CommandType::Cancel
+            | CommandType::GetCapability
+            | CommandType::AckCcCi
+            | CommandType::SetNotificationEnable => {
+                Ok(ResponseData::Ppm(ppm::ResponseData::from_bytes(command_type, bytes)?))
+            }
+            // All other commands are LPM commands
+            _ => Ok(ResponseData::Lpm(lpm::ResponseData::from_bytes(command_type, bytes)?)),
+        }
     }
 }
 
-impl Encode for ResponseData {
-    fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-        match self {
-            ResponseData::Ppm(resp) => {
-                let (bytes, len) = resp.to_bytes();
-                encoder
-                    .writer()
-                    .write(bytes.get(..len).ok_or(EncodeError::UnexpectedEnd)?)
-            }
-            ResponseData::Lpm(resp) => {
-                let (bytes, len) = resp.to_bytes();
-                encoder
-                    .writer()
-                    .write(bytes.get(..len).ok_or(EncodeError::UnexpectedEnd)?)
-            }
-        }
+/// Raw wire format of [`Response`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+pub struct ResponseRaw {
+    /// Command status and connect change indicator
+    pub cci: U32LE,
+    /// Response data, interpreted according to the command type
+    pub data: [u8; ResponseData::MAX_LEN],
+}
+
+impl ResponseRaw {
+    /// Length of a raw response in bytes
+    pub const LEN: usize = size_of::<Self>();
+}
+
+/// Length of a response in bytes, the CCI plus the maximum response data
+pub const RESPONSE_LEN: usize = size_of::<ResponseRaw>();
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ResponseRaw {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "ResponseRaw {{ cci: {}, data: {} }}",
+            cci::CciRaw::from(self.cci.get()),
+            self.data
+        )
     }
 }
 
@@ -287,6 +358,48 @@ pub struct Response<T: PortId> {
     pub cci: cci::Cci<T>,
     /// Response data for the command
     pub data: Option<ResponseData>,
+}
+
+impl<T: PortId> Response<T> {
+    /// Length of a response in bytes
+    pub const LEN: usize = ResponseRaw::LEN;
+
+    /// Converts this response into raw bytes
+    ///
+    /// Returns a [`Self::LEN`] sized buffer along with the number of valid bytes at its start. The
+    /// valid length covers the CCI plus however much response data the command produced.
+    pub fn to_bytes(&self) -> ([u8; RESPONSE_LEN], usize) {
+        let (data, data_len) = match self.data {
+            Some(data) => data.to_bytes(),
+            None => ([0u8; ResponseData::MAX_LEN], 0),
+        };
+
+        (
+            bytemuck::must_cast(ResponseRaw {
+                cci: U32LE::new(self.cci.into()),
+                data,
+            }),
+            size_of::<U32LE>() + data_len,
+        )
+    }
+
+    /// Reconstructs a response from its command type and raw bytes
+    ///
+    /// The command type is needed because a response carries no indication of which command
+    /// produced it. Response data is only decoded for commands that produce it.
+    pub fn from_bytes(command_type: CommandType, bytes: [u8; RESPONSE_LEN]) -> Result<Self, InvalidResponseData> {
+        let raw = bytemuck::must_cast::<_, ResponseRaw>(bytes);
+        let data = if command_type.has_response() {
+            Some(ResponseData::from_bytes(command_type, raw.data)?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            cci: cci::Cci::from(raw.cci.get()),
+            data,
+        })
+    }
 }
 
 impl<T: PortId> From<cci::Cci<T>> for Response<T> {
@@ -446,13 +559,23 @@ mod tests {
     #[test]
     fn test_ppm_response_encoding() {
         let (response_data, bytes) = ppm::get_capability::test::create_response_data();
-        let expected = ResponseData::Ppm(ppm::ResponseData::GetCapability(response_data));
+        let expected = GlobalResponse {
+            cci: cci::Cci::new_cmd_complete(),
+            data: Some(ResponseData::Ppm(ppm::ResponseData::GetCapability(response_data))),
+        };
 
-        let mut encoded_bytes = [0u8; ppm::get_capability::RESPONSE_DATA_LEN];
-        let len = expected.encode_into_slice(&mut encoded_bytes).unwrap();
+        let (encoded_bytes, len) = expected.to_bytes();
 
-        assert_eq!(len, ppm::get_capability::RESPONSE_DATA_LEN);
-        assert_eq!(encoded_bytes, bytes);
+        assert_eq!(len, size_of::<U32LE>() + ppm::get_capability::RESPONSE_DATA_LEN);
+        assert_eq!(
+            encoded_bytes.get(..size_of::<U32LE>()).unwrap(),
+            u32::from(expected.cci).to_le_bytes()
+        );
+        assert_eq!(encoded_bytes.get(size_of::<U32LE>()..).unwrap(), bytes);
+        assert_eq!(
+            Response::from_bytes(CommandType::GetCapability, encoded_bytes),
+            Ok(expected)
+        );
     }
 
     /// Test LPM response encoding
@@ -461,13 +584,38 @@ mod tests {
     #[test]
     fn test_lpm_response_encoding() {
         let (response_data, bytes) = lpm::get_connector_status::test::create_response_data();
-        let expected = ResponseData::Lpm(lpm::ResponseData::GetConnectorStatus(response_data));
+        let expected = GlobalResponse {
+            cci: cci::Cci::new_cmd_complete(),
+            data: Some(ResponseData::Lpm(lpm::ResponseData::GetConnectorStatus(response_data))),
+        };
 
-        let mut encoded_bytes = [0u8; lpm::get_connector_status::RESPONSE_DATA_LEN];
-        let len = expected.encode_into_slice(&mut encoded_bytes).unwrap();
+        let (encoded_bytes, len) = expected.to_bytes();
 
-        assert_eq!(len, lpm::get_connector_status::RESPONSE_DATA_LEN);
-        assert_eq!(encoded_bytes, bytes);
+        assert_eq!(len, size_of::<U32LE>() + lpm::get_connector_status::RESPONSE_DATA_LEN);
+        assert_eq!(
+            encoded_bytes
+                .get(size_of::<U32LE>()..size_of::<U32LE>() + lpm::get_connector_status::RESPONSE_DATA_LEN)
+                .unwrap(),
+            bytes
+        );
+        assert_eq!(
+            Response::from_bytes(CommandType::GetConnectorStatus, encoded_bytes),
+            Ok(expected)
+        );
+    }
+
+    /// Commands without response data produce a CCI-only response
+    #[test]
+    fn test_response_without_data() {
+        let expected = GlobalResponse {
+            cci: cci::Cci::new_cmd_complete(),
+            data: None,
+        };
+
+        let (bytes, len) = expected.to_bytes();
+
+        assert_eq!(len, size_of::<U32LE>());
+        assert_eq!(Response::from_bytes(CommandType::AckCcCi, bytes), Ok(expected));
     }
 
     /// Every defined command type round-trips through the raw header, preserving the data length
