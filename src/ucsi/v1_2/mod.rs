@@ -197,6 +197,30 @@ impl<T: PortId> Command<T> {
             Command::LpmCommand(cmd) => cmd.command_type(),
         }
     }
+
+    /// Returns the connector this command targets
+    ///
+    /// PPM commands are not connector specific and return `None`.
+    pub fn connector(&self) -> Option<T> {
+        match self {
+            Command::PpmCommand(_) => None,
+            Command::LpmCommand(cmd) => Some(cmd.connector()),
+        }
+    }
+
+    /// Sets the connector this command targets
+    ///
+    /// Does nothing for PPM commands, which are not connector specific.
+    pub fn set_connector(&mut self, connector: T) -> &mut Self {
+        match self {
+            Command::PpmCommand(_) => (),
+            Command::LpmCommand(cmd) => {
+                cmd.set_connector(connector);
+            }
+        }
+
+        self
+    }
 }
 
 impl<T: PortId> TryFrom<Command<T>> for CommandRaw {
@@ -547,12 +571,58 @@ mod tests {
         bytes[0] = CommandType::GetConnectorStatus as u8;
         bytes[2] = 0x1;
 
-        let expected = Command::LpmCommand(lpm::Command::new(GlobalPortId(1), lpm::CommandData::GetConnectorStatus));
+        let expected = Command::LpmCommand(lpm::Command::new(lpm::CommandData::GetConnectorStatus(
+            lpm::get_connector_status::Args {
+                connector_number: GlobalPortId(1),
+            },
+        )));
 
         let raw = bytemuck::must_cast::<_, CommandRaw>(bytes);
 
         assert_eq!(Command::try_from(raw), Ok(expected));
         assert_eq!(CommandRaw::try_from(expected), Ok(raw));
+    }
+
+    /// A connector number is only meaningful for LPM commands
+    #[test]
+    fn test_command_connector() {
+        let ppm = GlobalCommand::PpmCommand(ppm::Command::PpmReset);
+        assert_eq!(ppm.connector(), None);
+
+        let lpm = GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::GetConnectorStatus(
+            lpm::get_connector_status::Args {
+                connector_number: GlobalPortId(1),
+            },
+        )));
+        assert_eq!(lpm.connector(), Some(GlobalPortId(1)));
+    }
+
+    /// Setting the connector updates the arguments that carry it, and is a no-op for PPM commands
+    #[test]
+    fn test_command_set_connector() {
+        let mut ppm = GlobalCommand::PpmCommand(ppm::Command::PpmReset);
+        let before = ppm;
+        ppm.set_connector(GlobalPortId(2));
+        assert_eq!(ppm, before);
+
+        let mut lpm = GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
+            lpm::connector_reset::Args {
+                connector_number: GlobalPortId(1),
+                hard_reset: true,
+            },
+        )));
+        lpm.set_connector(GlobalPortId(2));
+
+        assert_eq!(lpm.connector(), Some(GlobalPortId(2)));
+        assert_eq!(
+            lpm,
+            GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
+                lpm::connector_reset::Args {
+                    connector_number: GlobalPortId(2),
+                    hard_reset: true,
+                }
+            )))
+        );
     }
 
     #[test]
