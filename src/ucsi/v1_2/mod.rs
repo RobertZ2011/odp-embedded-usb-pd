@@ -201,21 +201,21 @@ impl<T: PortId> Command<T> {
     /// Returns the connector this command targets
     ///
     /// PPM commands are not connector specific and return `None`.
-    pub fn connector(&self) -> Option<T> {
+    pub fn connector_number(&self) -> Option<T> {
         match self {
             Command::PpmCommand(_) => None,
-            Command::LpmCommand(cmd) => Some(cmd.connector()),
+            Command::LpmCommand(cmd) => Some(cmd.connector_number()),
         }
     }
 
     /// Sets the connector this command targets
     ///
     /// Does nothing for PPM commands, which are not connector specific.
-    pub fn set_connector(&mut self, connector: T) -> &mut Self {
+    pub fn set_connector_number(&mut self, connector: T) -> &mut Self {
         match self {
             Command::PpmCommand(_) => (),
             Command::LpmCommand(cmd) => {
-                cmd.set_connector(connector);
+                cmd.set_connector_number(connector);
             }
         }
 
@@ -587,14 +587,14 @@ mod tests {
     #[test]
     fn test_command_connector() {
         let ppm = GlobalCommand::PpmCommand(ppm::Command::PpmReset);
-        assert_eq!(ppm.connector(), None);
+        assert_eq!(ppm.connector_number(), None);
 
         let lpm = GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::GetConnectorStatus(
             lpm::get_connector_status::Args {
                 connector_number: GlobalPortId(1),
             },
         )));
-        assert_eq!(lpm.connector(), Some(GlobalPortId(1)));
+        assert_eq!(lpm.connector_number(), Some(GlobalPortId(1)));
     }
 
     /// Setting the connector updates the arguments that carry it, and is a no-op for PPM commands
@@ -602,7 +602,7 @@ mod tests {
     fn test_command_set_connector() {
         let mut ppm = GlobalCommand::PpmCommand(ppm::Command::PpmReset);
         let before = ppm;
-        ppm.set_connector(GlobalPortId(2));
+        ppm.set_connector_number(GlobalPortId(2));
         assert_eq!(ppm, before);
 
         let mut lpm = GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
@@ -611,9 +611,9 @@ mod tests {
                 hard_reset: true,
             },
         )));
-        lpm.set_connector(GlobalPortId(2));
+        lpm.set_connector_number(GlobalPortId(2));
 
-        assert_eq!(lpm.connector(), Some(GlobalPortId(2)));
+        assert_eq!(lpm.connector_number(), Some(GlobalPortId(2)));
         assert_eq!(
             lpm,
             GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(

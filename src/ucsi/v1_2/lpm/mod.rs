@@ -160,7 +160,7 @@ impl<T: PortId> CommandData<T> {
     }
 
     /// Returns the connector this command targets
-    pub fn connector(&self) -> T {
+    pub fn connector_number(&self) -> T {
         match self {
             CommandData::ConnectorReset(args) => args.connector_number,
             CommandData::GetConnectorStatus(args) => args.connector_number,
@@ -181,7 +181,7 @@ impl<T: PortId> CommandData<T> {
     }
 
     /// Sets the connector this command targets
-    pub fn set_connector(&mut self, connector: T) -> &mut Self {
+    pub fn set_connector_number(&mut self, connector: T) -> &mut Self {
         match self {
             CommandData::ConnectorReset(args) => args.connector_number = connector,
             CommandData::GetConnectorStatus(args) => args.connector_number = connector,
@@ -217,13 +217,13 @@ impl<T: PortId> Command<T> {
     }
 
     /// Returns the connector this command targets
-    pub fn connector(&self) -> T {
-        self.operation.connector()
+    pub fn connector_number(&self) -> T {
+        self.operation.connector_number()
     }
 
     /// Sets the connector this command targets
-    pub fn set_connector(&mut self, connector: T) -> &mut Self {
-        self.operation.set_connector(connector);
+    pub fn set_connector_number(&mut self, connector: T) -> &mut Self {
+        self.operation.set_connector_number(connector);
         self
     }
 
@@ -973,15 +973,15 @@ mod tests {
 
         for operation in commands {
             let mut command = GlobalCommand::new(operation);
-            assert_eq!(command.connector(), GlobalPortId(0));
+            assert_eq!(command.connector_number(), GlobalPortId(0));
 
-            command.set_connector(GlobalPortId(3));
-            assert_eq!(command.connector(), GlobalPortId(3));
+            command.set_connector_number(GlobalPortId(3));
+            assert_eq!(command.connector_number(), GlobalPortId(3));
             // The connector must also reach the wire format
             assert_eq!(
                 GlobalCommand::try_from(CommandRaw::try_from(command).unwrap())
                     .unwrap()
-                    .connector(),
+                    .connector_number(),
                 GlobalPortId(3)
             );
         }

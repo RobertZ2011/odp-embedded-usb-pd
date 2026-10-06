@@ -5,8 +5,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::pdo::{MA50_UNIT, MV20_UNIT, MV25_UNIT, MW1000_UNIT, MW500_UNIT};
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
-use crate::PortId;
-use crate::{type_c, PowerRole};
+use crate::{type_c, PortId, PowerRole};
 
 /// Length of the raw argument bits, this command uses the entire payload
 pub const ARG_BITS_LEN: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>();

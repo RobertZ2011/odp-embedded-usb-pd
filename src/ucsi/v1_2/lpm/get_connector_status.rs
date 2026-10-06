@@ -6,8 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::ucsi::v1_2::lpm::ConnectorNumberRaw;
 use crate::ucsi::v1_2::ppm::set_notification_enable::NotificationEnable;
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
-use crate::PortId;
-use crate::PowerRole;
+use crate::{PortId, PowerRole};
 
 /// Data length for the GET_CONNECTOR_STATUS command response
 pub const RESPONSE_DATA_LEN: usize = 11;

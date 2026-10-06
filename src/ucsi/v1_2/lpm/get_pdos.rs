@@ -4,8 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use pack1::U32LE;
 
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
-use crate::PortId;
-use crate::PowerRole;
+use crate::{PortId, PowerRole};
 
 /// Command padding
 pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ArgBitsRaw>();
