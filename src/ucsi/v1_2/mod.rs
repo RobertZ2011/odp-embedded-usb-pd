@@ -384,7 +384,7 @@ impl defmt::Format for ResponseRaw {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Response<T: PortId> {
     /// CCI is produced by every command
-    pub cci: cci::Cci<T>,
+    pub cci: cci::CciNoDataLen<T>,
     /// Response data for the command
     pub data: Option<ResponseData>,
 }
@@ -406,8 +406,9 @@ impl<T: PortId> From<Response<T>> for ResponseRaw {
     ///
     /// Only the first [`Response::valid_len`] bytes are valid.
     fn from(response: Response<T>) -> Self {
+        let data_len = response.data.map_or(0, |data| data.data_len());
         ResponseRaw {
-            cci: U32LE::new(response.cci.into()),
+            cci: U32LE::new(response.cci.into_cci(data_len as u8).into()),
             data: response.data.map_or([0u8; ResponseData::MAX_LEN], Into::into),
         }
     }
@@ -428,7 +429,7 @@ impl<T: PortId> TryFrom<(CommandType, ResponseRaw)> for Response<T> {
         };
 
         Ok(Self {
-            cci: cci::Cci::from(raw.cci.get()),
+            cci: cci::CciNoDataLen::from(cci::Cci::from(raw.cci.get())),
             data,
         })
     }
@@ -436,14 +437,17 @@ impl<T: PortId> TryFrom<(CommandType, ResponseRaw)> for Response<T> {
 
 impl<T: PortId> From<cci::Cci<T>> for Response<T> {
     fn from(cci: cci::Cci<T>) -> Self {
-        Self { cci, data: None }
+        Self {
+            cci: cci.into(),
+            data: None,
+        }
     }
 }
 
 impl<T: PortId> From<ppm::Response<T>> for Response<T> {
     fn from(response: ppm::Response<T>) -> Self {
         Self {
-            cci: response.cci,
+            cci: response.cci.into(),
             data: response.data.map(ResponseData::Ppm),
         }
     }
@@ -452,7 +456,7 @@ impl<T: PortId> From<ppm::Response<T>> for Response<T> {
 impl<T: PortId> From<lpm::Response<T>> for Response<T> {
     fn from(response: lpm::Response<T>) -> Self {
         Self {
-            cci: response.cci,
+            cci: response.cci.into(),
             data: response.data.map(ResponseData::Lpm),
         }
     }
@@ -541,6 +545,8 @@ impl From<CommandHeader> for u16 {
 
 #[cfg(test)]
 mod tests {
+    use crate::ucsi::v1_2::lpm::get_pdos;
+
     use super::*;
 
     /// Test PPM command round-tripping
@@ -640,7 +646,7 @@ mod tests {
     fn test_ppm_response_encoding() {
         let (response_data, bytes) = ppm::get_capability::test::create_response_data();
         let expected = GlobalResponse {
-            cci: cci::Cci::new_cmd_complete(),
+            cci: cci::Cci::new_cmd_complete().into(),
             data: Some(ResponseData::Ppm(ppm::ResponseData::GetCapability(response_data))),
         };
 
@@ -653,7 +659,7 @@ mod tests {
         );
         assert_eq!(
             encoded_bytes.get(..size_of::<U32LE>()).unwrap(),
-            u32::from(expected.cci).to_le_bytes()
+            u32::from(expected.cci.into_cci(ppm::get_capability::RESPONSE_DATA_LEN as u8)).to_le_bytes()
         );
         assert_eq!(encoded_bytes.get(size_of::<U32LE>()..).unwrap(), bytes);
         assert_eq!(Response::try_from((CommandType::GetCapability, raw)), Ok(expected));
@@ -666,7 +672,7 @@ mod tests {
     fn test_lpm_response_encoding() {
         let (response_data, bytes) = lpm::get_connector_status::test::create_response_data();
         let expected = GlobalResponse {
-            cci: cci::Cci::new_cmd_complete(),
+            cci: cci::Cci::new_cmd_complete().into(),
             data: Some(ResponseData::Lpm(lpm::ResponseData::GetConnectorStatus(response_data))),
         };
 
@@ -690,7 +696,7 @@ mod tests {
     #[test]
     fn test_response_without_data() {
         let expected = GlobalResponse {
-            cci: cci::Cci::new_cmd_complete(),
+            cci: cci::Cci::new_cmd_complete().into(),
             data: None,
         };
 
@@ -754,5 +760,20 @@ mod tests {
             }),
             Err(InvalidCommandType(0x16))
         );
+    }
+
+    /// Verify that the data len is correctly propagated into the raw CCI
+    #[test]
+    fn test_data_len() {
+        let response_data = Response::<GlobalPortId> {
+            cci: cci::Cci::new_cmd_complete().into(),
+            data: Some(ResponseData::Lpm(lpm::ResponseData::GetPdos(get_pdos::ResponseData {
+                pdos: [0x12, 0x34, 0x56, 0x78],
+            }))),
+        };
+
+        let raw = ResponseRaw::from(response_data);
+        let cci = cci::Cci::<GlobalPortId>::from(raw.cci.get());
+        assert_eq!(cci.data_len, 16);
     }
 }

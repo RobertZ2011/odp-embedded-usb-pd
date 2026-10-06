@@ -204,6 +204,79 @@ impl defmt::Format for CciRaw {
     }
 }
 
+/// A CCI variant without a data len field around [`Cci`].
+///
+/// The data len field comes from the [`ResponseData`] struct because that works better from a modularity standpoint. But it actually
+/// needs to go in the CCI. This struct omits it to provide a compile time check that the data len is not accidentally used from
+/// the CCI itself. This struct cannot be converted to/from a CciRaw directly.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CciNoDataLen<T: PortId> {
+    /// End of message
+    pub eom: bool,
+    /// Connector change on the given port
+    pub connector_change: T,
+    /// Vendor defined message
+    pub vendor_message: bool,
+    /// Security request
+    pub security_req: bool,
+    /// Firmware update request
+    pub fw_update_req: bool,
+    /// Command not supported
+    pub not_supported: bool,
+    /// Cancel complete
+    pub cancel_complete: bool,
+    /// PPM reset complete
+    pub reset_complete: bool,
+    /// Busy
+    pub busy: bool,
+    /// Acknowledgment command
+    pub ack_command: bool,
+    /// Command error
+    pub error: bool,
+    /// Command complete
+    pub cmd_complete: bool,
+}
+
+impl<T: PortId> CciNoDataLen<T> {
+    pub fn into_cci(self, data_len: u8) -> Cci<T> {
+        Cci {
+            eom: self.eom,
+            connector_change: self.connector_change,
+            vendor_message: self.vendor_message,
+            security_req: self.security_req,
+            fw_update_req: self.fw_update_req,
+            not_supported: self.not_supported,
+            cancel_complete: self.cancel_complete,
+            reset_complete: self.reset_complete,
+            busy: self.busy,
+            ack_command: self.ack_command,
+            error: self.error,
+            cmd_complete: self.cmd_complete,
+            data_len,
+        }
+    }
+}
+
+impl<T: PortId> From<Cci<T>> for CciNoDataLen<T> {
+    fn from(cci: Cci<T>) -> Self {
+        Self {
+            eom: cci.eom,
+            connector_change: cci.connector_change,
+            vendor_message: cci.vendor_message,
+            security_req: cci.security_req,
+            fw_update_req: cci.fw_update_req,
+            not_supported: cci.not_supported,
+            cancel_complete: cci.cancel_complete,
+            reset_complete: cci.reset_complete,
+            busy: cci.busy,
+            ack_command: cci.ack_command,
+            error: cci.error,
+            cmd_complete: cci.cmd_complete,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
