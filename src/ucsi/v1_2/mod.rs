@@ -294,12 +294,6 @@ pub enum ResponseData {
 }
 
 impl ResponseData {
-    /// Maximum length in bytes of any response data
-    pub const MAX_LEN: usize = ppm::ResponseData::MAX_LEN;
-
-    /// The PPM and LPM response buffers are forwarded without resizing, so they must be the same size
-    const _MAX_LEN_CHECK: () = assert!(ppm::ResponseData::MAX_LEN == lpm::ResponseData::MAX_LEN);
-
     /// Returns the command type that produces this response data
     pub const fn command_type(&self) -> CommandType {
         match self {
@@ -317,8 +311,8 @@ impl ResponseData {
     }
 }
 
-impl From<ResponseData> for [u8; ResponseData::MAX_LEN] {
-    /// Converts response data into a [`ResponseData::MAX_LEN`] sized buffer
+impl From<ResponseData> for ResponseDataRaw {
+    /// Converts response data from a [`ResponseDataRaw::MAX_LEN`] sized buffer
     ///
     /// Only the first [`ResponseData::data_len`] bytes are valid.
     fn from(data: ResponseData) -> Self {
@@ -329,24 +323,44 @@ impl From<ResponseData> for [u8; ResponseData::MAX_LEN] {
     }
 }
 
-impl TryFrom<(CommandType, [u8; ResponseData::MAX_LEN])> for ResponseData {
+impl TryFrom<(CommandType, ResponseDataRaw)> for ResponseData {
     type Error = InvalidResponseData;
 
     /// Reconstructs response data from its command type and raw bytes
-    fn try_from((command_type, bytes): (CommandType, [u8; ResponseData::MAX_LEN])) -> Result<Self, Self::Error> {
+    fn try_from((command_type, bytes): (CommandType, ResponseDataRaw)) -> Result<Self, Self::Error> {
         match command_type {
             // PPM commands
             CommandType::PpmReset
             | CommandType::Cancel
             | CommandType::GetCapability
             | CommandType::AckCcCi
-            | CommandType::SetNotificationEnable => {
-                Ok(ResponseData::Ppm(ppm::ResponseData::try_from((command_type, bytes))?))
-            }
+            | CommandType::SetNotificationEnable => Ok(ResponseData::Ppm(ppm::ResponseData::try_from((
+                command_type,
+                ResponseDataRaw { payload: bytes.payload },
+            ))?)),
             // All other commands are LPM commands
-            _ => Ok(ResponseData::Lpm(lpm::ResponseData::try_from((command_type, bytes))?)),
+            _ => Ok(ResponseData::Lpm(lpm::ResponseData::try_from((
+                command_type,
+                ResponseDataRaw { payload: bytes.payload },
+            ))?)),
         }
     }
+}
+
+/// Raw wire format of [`ResponseData`]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ResponseDataRaw {
+    /// Raw PDOs
+    pub payload: [u8; ppm::RESPONSE_DATA_MAX_LEN],
+}
+
+impl ResponseDataRaw {
+    /// Maximum length in bytes of any response data
+    pub const MAX_LEN: usize = ppm::RESPONSE_DATA_MAX_LEN;
+    /// The PPM and LPM response buffers are forwarded without resizing, so they must be the same size
+    const _MAX_LEN_CHECK: () = assert!(ppm::RESPONSE_DATA_MAX_LEN == lpm::RESPONSE_DATA_MAX_LEN);
 }
 
 /// Raw wire format of [`Response`]
@@ -356,7 +370,7 @@ pub struct ResponseRaw {
     /// Command status and connect change indicator
     pub cci: U32LE,
     /// Response data, interpreted according to the command type
-    pub data: [u8; ResponseData::MAX_LEN],
+    pub data: ResponseDataRaw,
 }
 
 impl ResponseRaw {
@@ -409,7 +423,12 @@ impl<T: PortId> From<Response<T>> for ResponseRaw {
         let data_len = response.data.map_or(0, |data| data.data_len());
         ResponseRaw {
             cci: U32LE::new(response.cci.into_cci(data_len as u8).into()),
-            data: response.data.map_or([0u8; ResponseData::MAX_LEN], Into::into),
+            data: response.data.map_or(
+                ResponseDataRaw {
+                    payload: [0u8; ResponseDataRaw::MAX_LEN],
+                },
+                Into::into,
+            ),
         }
     }
 }
@@ -422,16 +441,14 @@ impl<T: PortId> TryFrom<(CommandType, ResponseRaw)> for Response<T> {
     /// The command type is needed because a response carries no indication of which command
     /// produced it. Response data is only decoded for commands that produce it.
     fn try_from((command_type, raw): (CommandType, ResponseRaw)) -> Result<Self, Self::Error> {
-        let data = if command_type.has_response() {
+        let cci = cci::Cci::<T>::from(raw.cci.get());
+        let data = if command_type.has_response() && cci.data_len != 0 {
             Some(ResponseData::try_from((command_type, raw.data))?)
         } else {
             None
         };
 
-        Ok(Self {
-            cci: cci::CciNoDataLen::from(cci::Cci::from(raw.cci.get())),
-            data,
-        })
+        Ok(Self { cci: cci.into(), data })
     }
 }
 
@@ -545,9 +562,8 @@ impl From<CommandHeader> for u16 {
 
 #[cfg(test)]
 mod tests {
-    use crate::ucsi::v1_2::lpm::get_pdos;
-
     use super::*;
+    use crate::ucsi::v1_2::lpm::get_pdos;
 
     /// Test PPM command round-tripping
     ///

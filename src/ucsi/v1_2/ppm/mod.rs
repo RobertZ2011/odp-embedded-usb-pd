@@ -8,6 +8,8 @@ pub mod ppm_reset;
 pub mod set_notification_enable;
 pub mod state_machine;
 
+pub const RESPONSE_DATA_MAX_LEN: usize = get_capability::ResponseDataRaw::LEN;
+
 /// Commands that only affect the PPM level and don't need to be sent to an LPM
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -84,9 +86,6 @@ pub enum ResponseData {
 }
 
 impl ResponseData {
-    /// Maximum length in bytes of any PPM response data
-    pub const MAX_LEN: usize = get_capability::ResponseDataRaw::LEN;
-
     /// Returns the command type that produces this response data
     pub const fn command_type(&self) -> CommandType {
         match self {
@@ -102,28 +101,33 @@ impl ResponseData {
     }
 }
 
-impl From<ResponseData> for [u8; ResponseData::MAX_LEN] {
-    /// Converts response data into a [`ResponseData::MAX_LEN`] sized buffer
+impl From<ResponseData> for super::ResponseDataRaw {
+    /// Converts response data into a [`ResponseDataRaw::MAX_LEN`] sized buffer
     ///
     /// Only the first [`ResponseData::data_len`] bytes are valid.
     fn from(data: ResponseData) -> Self {
         match data {
-            ResponseData::GetCapability(data) => bytemuck::must_cast(get_capability::ResponseDataRaw::from(data)),
+            ResponseData::GetCapability(data) => {
+                bytemuck::must_cast::<_, super::ResponseDataRaw>(get_capability::ResponseDataRaw::from(data))
+            }
         }
     }
 }
 
-impl TryFrom<(CommandType, [u8; ResponseData::MAX_LEN])> for ResponseData {
+impl TryFrom<(CommandType, super::ResponseDataRaw)> for ResponseData {
     type Error = InvalidCommandType;
 
     /// Reconstructs response data from its command type and raw bytes
     ///
     /// Returns [`InvalidCommandType`] if `command_type` is not a PPM command
     /// that produces response data.
-    fn try_from((command_type, bytes): (CommandType, [u8; ResponseData::MAX_LEN])) -> Result<Self, Self::Error> {
+    fn try_from((command_type, raw): (CommandType, super::ResponseDataRaw)) -> Result<Self, Self::Error> {
         match command_type {
             CommandType::GetCapability => Ok(ResponseData::GetCapability(
-                bytemuck::must_cast::<_, get_capability::ResponseDataRaw>(bytes).into(),
+                bytemuck::must_cast::<_, get_capability::ResponseDataRaw>(super::ResponseDataRaw {
+                    payload: raw.payload,
+                })
+                .into(),
             )),
             _ => Err(InvalidCommandType(command_type as u8)),
         }
@@ -146,6 +150,7 @@ pub type LocalResponse = Response<LocalPortId>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ucsi::v1_2::ResponseDataRaw;
 
     /// Builds the raw wire format of a PPM command from its type and payload
     fn raw(command_type: CommandType, payload: [u8; Command::PAYLOAD_LEN]) -> CommandRaw {
@@ -226,9 +231,9 @@ mod tests {
         };
         let expected = ResponseData::GetCapability(data);
 
-        let bytes: [u8; ResponseData::MAX_LEN] = expected.into();
+        let bytes: ResponseDataRaw = expected.into();
 
-        assert_eq!(expected.data_len(), ResponseData::MAX_LEN);
+        assert_eq!(expected.data_len(), get_capability::ResponseDataRaw::LEN);
         assert_eq!(
             ResponseData::try_from((CommandType::GetCapability, bytes)),
             Ok(expected)
@@ -237,7 +242,9 @@ mod tests {
 
     #[test]
     fn test_response_data_from_bytes_invalid_command() {
-        let bytes = [0u8; ResponseData::MAX_LEN];
+        let bytes = ResponseDataRaw {
+            payload: [0u8; ResponseDataRaw::MAX_LEN],
+        };
 
         assert_eq!(
             ResponseData::try_from((CommandType::PpmReset, bytes)),
