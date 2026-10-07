@@ -195,7 +195,7 @@ impl<T: PortId> TryFrom<Args<T>> for ArgBitsRaw<[u8; ARG_BITS_LEN]> {
         raw.set_operating_current(operating_current as u8);
 
         let output_voltage = args.output_voltage / u32::from(voltage_unit);
-        if output_voltage > u16::MAX as u32 {
+        if output_voltage > 0x0FFF {
             return Err(OverflowError::OutputVoltageOverflow(args.output_voltage));
         }
         raw.set_output_voltage(output_voltage as u16);
