@@ -20,6 +20,22 @@ pub struct Args<T: PortId> {
     pub am_specific: u32,
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
+    type Output = Args<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Args {
+            connector_number: f(self.connector_number),
+            enter: self.enter,
+            am_offset: self.am_offset,
+            am_specific: self.am_specific,
+        }
+    }
+}
+
 impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {

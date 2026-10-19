@@ -111,6 +111,23 @@ pub struct Args<T: PortId> {
     pub message_type: MessageType,
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
+    type Output = Args<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Args {
+            connector_number: f(self.connector_number),
+            recipient: self.recipient,
+            message_offset: self.message_offset,
+            num_bytes: self.num_bytes,
+            message_type: self.message_type,
+        }
+    }
+}
+
 impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {

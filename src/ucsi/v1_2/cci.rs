@@ -1,5 +1,6 @@
 use bitfield::bitfield;
 
+use crate::ucsi::MapPort;
 use crate::{GlobalPortId, LocalPortId, PortId};
 
 bitfield! {
@@ -101,6 +102,31 @@ impl<T: PortId> Cci<T> {
         Self {
             error: true,
             ..Default::default()
+        }
+    }
+}
+
+impl<T: PortId, Out: PortId> MapPort<T, Out> for Cci<T> {
+    type Output = Cci<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Cci {
+            connector_change: f(self.connector_change),
+            eom: self.eom,
+            vendor_message: self.vendor_message,
+            security_req: self.security_req,
+            fw_update_req: self.fw_update_req,
+            not_supported: self.not_supported,
+            cancel_complete: self.cancel_complete,
+            reset_complete: self.reset_complete,
+            busy: self.busy,
+            ack_command: self.ack_command,
+            error: self.error,
+            cmd_complete: self.cmd_complete,
+            data_len: self.data_len,
         }
     }
 }
@@ -254,6 +280,30 @@ impl<T: PortId> CciNoDataLen<T> {
             error: self.error,
             cmd_complete: self.cmd_complete,
             data_len,
+        }
+    }
+}
+
+impl<T: PortId, Out: PortId> MapPort<T, Out> for CciNoDataLen<T> {
+    type Output = CciNoDataLen<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        CciNoDataLen {
+            connector_change: f(self.connector_change),
+            eom: self.eom,
+            vendor_message: self.vendor_message,
+            security_req: self.security_req,
+            fw_update_req: self.fw_update_req,
+            not_supported: self.not_supported,
+            cancel_complete: self.cancel_complete,
+            reset_complete: self.reset_complete,
+            busy: self.busy,
+            ack_command: self.ack_command,
+            error: self.error,
+            cmd_complete: self.cmd_complete,
         }
     }
 }

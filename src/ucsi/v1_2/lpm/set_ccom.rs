@@ -60,6 +60,23 @@ pub struct Args<T: PortId> {
     pub disabled: bool,
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
+    type Output = Args<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Args {
+            connector_number: f(self.connector_number),
+            rp: self.rp,
+            rd: self.rd,
+            drp: self.drp,
+            disabled: self.disabled,
+        }
+    }
+}
+
 impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {
