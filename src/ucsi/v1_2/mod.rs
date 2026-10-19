@@ -4,6 +4,7 @@
 use bytemuck::{Pod, Zeroable};
 use pack1::U32LE;
 
+use crate::ucsi::MapPort;
 use crate::{GlobalPortId, LocalPortId, PdError, PortId};
 
 pub mod cci;
@@ -223,6 +224,20 @@ impl<T: PortId> Command<T> {
     }
 }
 
+impl<T: PortId, Out: PortId> MapPort<T, Out> for Command<T> {
+    type Output = Command<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        match self {
+            Command::PpmCommand(cmd) => Command::PpmCommand(cmd),
+            Command::LpmCommand(cmd) => Command::LpmCommand(cmd.map_port(f)),
+        }
+    }
+}
+
 impl<T: PortId> TryFrom<Command<T>> for CommandRaw {
     type Error = InvalidCommand;
 
@@ -412,6 +427,20 @@ impl<T: PortId> Response<T> {
     /// Covers the CCI plus however much response data the command produced.
     pub fn valid_len(&self) -> usize {
         size_of::<U32LE>() + self.data.map_or(0, |data| data.data_len())
+    }
+}
+
+impl<T: PortId, Out: PortId> MapPort<T, Out> for Response<T> {
+    type Output = Response<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Response {
+            cci: self.cci.map_port(f),
+            data: self.data,
+        }
     }
 }
 

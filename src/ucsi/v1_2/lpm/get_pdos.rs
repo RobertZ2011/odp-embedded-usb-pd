@@ -116,6 +116,24 @@ pub struct Args<T: PortId> {
     pub source_capability_type: SourceCapabilityType,
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
+    type Output = Args<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Args {
+            connector_number: f(self.connector_number),
+            partner: self.partner,
+            pdo_offset: self.pdo_offset,
+            num_pdos: self.num_pdos,
+            role: self.role,
+            source_capability_type: self.source_capability_type,
+        }
+    }
+}
+
 impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {

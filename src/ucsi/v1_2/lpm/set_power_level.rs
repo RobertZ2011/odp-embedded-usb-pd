@@ -125,6 +125,25 @@ pub struct Args<T: PortId> {
     pub output_voltage: u32,
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
+    type Output = Args<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Args {
+            connector_number: f(self.connector_number),
+            power_role: self.power_role,
+            lsb_control: self.lsb_control,
+            max_power: self.max_power,
+            type_c_current: self.type_c_current,
+            operating_current: self.operating_current,
+            output_voltage: self.output_voltage,
+        }
+    }
+}
+
 impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {

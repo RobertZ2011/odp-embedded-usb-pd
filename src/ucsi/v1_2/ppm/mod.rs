@@ -1,4 +1,5 @@
 use crate::ucsi::v1_2::{cci, CommandHeaderRaw, CommandRaw, CommandType, InvalidCommandType, COMMAND_LEN};
+use crate::ucsi::MapPort;
 use crate::{GlobalPortId, LocalPortId, PortId};
 
 pub mod ack_cc_ci;
@@ -146,6 +147,20 @@ pub struct Response<T: PortId> {
 
 pub type GlobalResponse = Response<GlobalPortId>;
 pub type LocalResponse = Response<LocalPortId>;
+
+impl<T: PortId, Out: PortId> MapPort<T, Out> for Response<T> {
+    type Output = Response<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Response {
+            cci: self.cci.map_port(f),
+            data: self.data,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

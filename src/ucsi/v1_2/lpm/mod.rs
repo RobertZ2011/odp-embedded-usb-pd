@@ -204,6 +204,33 @@ impl<T: PortId> CommandData<T> {
     }
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for CommandData<T> {
+    type Output = CommandData<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        match self {
+            CommandData::ConnectorReset(args) => CommandData::ConnectorReset(args.map_port(&f)),
+            CommandData::GetConnectorStatus(args) => CommandData::GetConnectorStatus(args.map_port(&f)),
+            CommandData::GetConnectorCapability(args) => CommandData::GetConnectorCapability(args.map_port(&f)),
+            CommandData::SetPowerLevel(args) => CommandData::SetPowerLevel(args.map_port(&f)),
+            CommandData::SetNewCam(args) => CommandData::SetNewCam(args.map_port(&f)),
+            CommandData::GetErrorStatus(args) => CommandData::GetErrorStatus(args.map_port(&f)),
+            CommandData::SetCcom(args) => CommandData::SetCcom(args.map_port(&f)),
+            CommandData::SetUor(args) => CommandData::SetUor(args.map_port(&f)),
+            CommandData::SetPdr(args) => CommandData::SetPdr(args.map_port(&f)),
+            CommandData::GetAlternateModes(args) => CommandData::GetAlternateModes(args.map_port(&f)),
+            CommandData::GetCamSupported(args) => CommandData::GetCamSupported(args.map_port(&f)),
+            CommandData::GetCurrentCam(args) => CommandData::GetCurrentCam(args.map_port(&f)),
+            CommandData::GetPdos(args) => CommandData::GetPdos(args.map_port(&f)),
+            CommandData::GetCableProperty(args) => CommandData::GetCableProperty(args.map_port(&f)),
+            CommandData::GetPdMessage(args) => CommandData::GetPdMessage(args.map_port(&f)),
+        }
+    }
+}
+
 /// LPM commands
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -244,6 +271,19 @@ impl<T: PortId> Command<T> {
     /// Returns the command type for this command
     pub const fn command_type(&self) -> CommandType {
         self.operation.command_type()
+    }
+}
+
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Command<T> {
+    type Output = Command<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Command {
+            operation: self.operation.map_port(f),
+        }
     }
 }
 
@@ -562,6 +602,20 @@ pub struct Response<T: PortId> {
 
 pub type GlobalResponse = Response<GlobalPortId>;
 pub type LocalResponse = Response<LocalPortId>;
+
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Response<T> {
+    type Output = Response<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Response {
+            cci: self.cci.map_port(f),
+            data: self.data,
+        }
+    }
+}
 
 bitfield! {
     /// Raw connector number

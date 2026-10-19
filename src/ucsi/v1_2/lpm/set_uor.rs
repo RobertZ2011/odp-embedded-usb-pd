@@ -55,6 +55,22 @@ pub struct Args<T: PortId> {
     pub accept_swap: bool,
 }
 
+impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
+    type Output = Args<Out>;
+
+    fn map_port<F>(self, f: F) -> Self::Output
+    where
+        F: Fn(T) -> Out,
+    {
+        Args {
+            connector_number: f(self.connector_number),
+            dfp: self.dfp,
+            ufp: self.ufp,
+            accept_swap: self.accept_swap,
+        }
+    }
+}
+
 impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {
