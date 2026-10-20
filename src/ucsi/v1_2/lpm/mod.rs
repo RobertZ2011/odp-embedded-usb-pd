@@ -1,6 +1,7 @@
 use bitfield::bitfield;
 
 use crate::ucsi::v1_2::{cci, CommandHeaderRaw, CommandRaw, CommandType, InvalidCommandType, COMMAND_LEN};
+use crate::ucsi::ConnectorNumber;
 use crate::{GlobalPortId, LocalPortId, PortId};
 
 pub mod connector_reset;
@@ -125,7 +126,7 @@ pub enum CommandData<T: PortId> {
     GetConnectorCapability(get_connector_capability::Args<T>),
     SetPowerLevel(set_power_level::Args<T>),
     SetNewCam(set_new_cam::Args<T>),
-    GetErrorStatus(get_error_status::Args<T>),
+    GetErrorStatus(get_error_status::Args),
     SetCcom(set_ccom::Args<T>),
     SetUor(set_uor::Args<T>),
     SetPdr(set_pdr::Args<T>),
@@ -158,37 +159,37 @@ impl<T: PortId> CommandData<T> {
             CommandData::GetPdMessage(_) => CommandType::GetPdMessage,
         }
     }
+}
 
-    /// Returns the connector this command targets
-    pub fn connector_number(&self) -> T {
+impl<T: PortId> ConnectorNumber<T> for CommandData<T> {
+    fn connector_number(&self) -> Option<T> {
         match self {
-            CommandData::ConnectorReset(args) => args.connector_number,
-            CommandData::GetConnectorStatus(args) => args.connector_number,
-            CommandData::GetConnectorCapability(args) => args.connector_number,
-            CommandData::SetPowerLevel(args) => args.connector_number,
-            CommandData::SetNewCam(args) => args.connector_number,
-            CommandData::GetErrorStatus(args) => args.connector_number,
-            CommandData::SetCcom(args) => args.connector_number,
-            CommandData::SetUor(args) => args.connector_number,
-            CommandData::SetPdr(args) => args.connector_number,
-            CommandData::GetAlternateModes(args) => args.connector_number,
-            CommandData::GetCamSupported(args) => args.connector_number,
-            CommandData::GetCurrentCam(args) => args.connector_number,
-            CommandData::GetPdos(args) => args.connector_number,
-            CommandData::GetCableProperty(args) => args.connector_number,
-            CommandData::GetPdMessage(args) => args.connector_number,
+            CommandData::ConnectorReset(args) => Some(args.connector_number),
+            CommandData::GetConnectorStatus(args) => Some(args.connector_number),
+            CommandData::GetConnectorCapability(args) => Some(args.connector_number),
+            CommandData::SetPowerLevel(args) => Some(args.connector_number),
+            CommandData::SetNewCam(args) => Some(args.connector_number),
+            CommandData::GetErrorStatus(_args) => None,
+            CommandData::SetCcom(args) => Some(args.connector_number),
+            CommandData::SetUor(args) => Some(args.connector_number),
+            CommandData::SetPdr(args) => Some(args.connector_number),
+            CommandData::GetAlternateModes(args) => Some(args.connector_number),
+            CommandData::GetCamSupported(args) => Some(args.connector_number),
+            CommandData::GetCurrentCam(args) => Some(args.connector_number),
+            CommandData::GetPdos(args) => Some(args.connector_number),
+            CommandData::GetCableProperty(args) => Some(args.connector_number),
+            CommandData::GetPdMessage(args) => Some(args.connector_number),
         }
     }
 
-    /// Sets the connector this command targets
-    pub fn set_connector_number(&mut self, connector: T) -> &mut Self {
+    fn set_connector_number(&mut self, connector: T) -> &mut Self {
         match self {
             CommandData::ConnectorReset(args) => args.connector_number = connector,
             CommandData::GetConnectorStatus(args) => args.connector_number = connector,
             CommandData::GetConnectorCapability(args) => args.connector_number = connector,
             CommandData::SetPowerLevel(args) => args.connector_number = connector,
             CommandData::SetNewCam(args) => args.connector_number = connector,
-            CommandData::GetErrorStatus(args) => args.connector_number = connector,
+            CommandData::GetErrorStatus(_) => {}
             CommandData::SetCcom(args) => args.connector_number = connector,
             CommandData::SetUor(args) => args.connector_number = connector,
             CommandData::SetPdr(args) => args.connector_number = connector,
@@ -217,7 +218,7 @@ impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for CommandData<T> {
             CommandData::GetConnectorCapability(args) => CommandData::GetConnectorCapability(args.map_port(&f)),
             CommandData::SetPowerLevel(args) => CommandData::SetPowerLevel(args.map_port(&f)),
             CommandData::SetNewCam(args) => CommandData::SetNewCam(args.map_port(&f)),
-            CommandData::GetErrorStatus(args) => CommandData::GetErrorStatus(args.map_port(&f)),
+            CommandData::GetErrorStatus(args) => CommandData::GetErrorStatus(args),
             CommandData::SetCcom(args) => CommandData::SetCcom(args.map_port(&f)),
             CommandData::SetUor(args) => CommandData::SetUor(args.map_port(&f)),
             CommandData::SetPdr(args) => CommandData::SetPdr(args.map_port(&f)),
@@ -243,23 +244,23 @@ impl<T: PortId> Command<T> {
         Command { operation }
     }
 
-    /// Returns the connector this command targets
-    pub fn connector_number(&self) -> T {
-        self.operation.connector_number()
-    }
-
-    /// Sets the connector this command targets
-    pub fn set_connector_number(&mut self, connector: T) -> &mut Self {
-        self.operation.set_connector_number(connector);
-        self
-    }
-
     pub fn operation(&self) -> CommandData<T> {
         self.operation
     }
 
     pub fn set_operation(&mut self, operation: CommandData<T>) -> &mut Self {
         self.operation = operation;
+        self
+    }
+}
+
+impl<T: PortId> ConnectorNumber<T> for Command<T> {
+    fn connector_number(&self) -> Option<T> {
+        self.operation.connector_number()
+    }
+
+    fn set_connector_number(&mut self, connector: T) -> &mut Self {
+        self.operation.set_connector_number(connector);
         self
     }
 }
@@ -835,13 +836,10 @@ mod tests {
     fn test_decode_get_error_status() {
         let mut bytes = [0u8; COMMAND_LEN];
         bytes[0] = CommandType::GetErrorStatus as u8;
-        bytes[2] = 0x1;
 
         assert_eq!(
             decode(bytes).unwrap(),
-            GlobalCommand::new(CommandData::GetErrorStatus(get_error_status::Args {
-                connector_number: GlobalPortId(1)
-            }))
+            GlobalCommand::new(CommandData::GetErrorStatus(get_error_status::Args))
         );
     }
 
@@ -1018,36 +1016,42 @@ mod tests {
     #[test]
     fn test_set_connector_all_commands() {
         let commands = [
-            CommandData::ConnectorReset(Default::default()),
-            CommandData::GetConnectorStatus(Default::default()),
-            CommandData::GetConnectorCapability(Default::default()),
-            CommandData::SetPowerLevel(Default::default()),
-            CommandData::SetNewCam(Default::default()),
-            CommandData::GetErrorStatus(Default::default()),
-            CommandData::SetCcom(Default::default()),
-            CommandData::SetUor(Default::default()),
-            CommandData::SetPdr(Default::default()),
-            CommandData::GetAlternateModes(Default::default()),
-            CommandData::GetCamSupported(Default::default()),
-            CommandData::GetCurrentCam(Default::default()),
-            CommandData::GetPdos(Default::default()),
-            CommandData::GetCableProperty(Default::default()),
-            CommandData::GetPdMessage(Default::default()),
+            (true, CommandData::ConnectorReset(Default::default())),
+            (true, CommandData::GetConnectorStatus(Default::default())),
+            (true, CommandData::GetConnectorCapability(Default::default())),
+            (true, CommandData::SetPowerLevel(Default::default())),
+            (true, CommandData::SetNewCam(Default::default())),
+            (false, CommandData::GetErrorStatus(Default::default())),
+            (true, CommandData::SetCcom(Default::default())),
+            (true, CommandData::SetUor(Default::default())),
+            (true, CommandData::SetPdr(Default::default())),
+            (true, CommandData::GetAlternateModes(Default::default())),
+            (true, CommandData::GetCamSupported(Default::default())),
+            (true, CommandData::GetCurrentCam(Default::default())),
+            (true, CommandData::GetPdos(Default::default())),
+            (true, CommandData::GetCableProperty(Default::default())),
+            (true, CommandData::GetPdMessage(Default::default())),
         ];
 
-        for operation in commands {
+        for (has_connector_number, operation) in commands {
             let mut command = GlobalCommand::new(operation);
-            assert_eq!(command.connector_number(), GlobalPortId(0));
-
-            command.set_connector_number(GlobalPortId(3));
-            assert_eq!(command.connector_number(), GlobalPortId(3));
-            // The connector must also reach the wire format
-            assert_eq!(
-                GlobalCommand::try_from(CommandRaw::try_from(command).unwrap())
-                    .unwrap()
-                    .connector_number(),
-                GlobalPortId(3)
-            );
+            if has_connector_number {
+                assert_eq!(command.connector_number(), Some(GlobalPortId(0)));
+                command.set_connector_number(GlobalPortId(3));
+                assert_eq!(command.connector_number(), Some(GlobalPortId(3)));
+                // The connector must also reach the wire format
+                assert_eq!(
+                    GlobalCommand::try_from(CommandRaw::try_from(command).unwrap())
+                        .unwrap()
+                        .connector_number(),
+                    Some(GlobalPortId(3))
+                );
+            } else {
+                assert_eq!(command.connector_number(), None);
+                command.set_connector_number(GlobalPortId(3));
+                // Don't have a connector number for this command, should be a no-op
+                assert_eq!(command.connector_number(), None);
+            }
         }
     }
 }

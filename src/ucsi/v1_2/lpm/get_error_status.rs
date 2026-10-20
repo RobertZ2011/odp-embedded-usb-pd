@@ -4,54 +4,26 @@ use bitfield::bitfield;
 use bytemuck::{Pod, Zeroable};
 use pack1::U16LE;
 
-use crate::ucsi::v1_2::lpm::ConnectorNumberRaw;
 use crate::ucsi::v1_2::{CommandHeaderRaw, COMMAND_LEN};
-use crate::PortId;
 
 /// Data length for the GET_CONNECTOR_STATUS command response
 pub const RESPONSE_DATA_LEN: usize = MAX_VENDOR_DATA_LEN + size_of::<InformationRaw>();
 /// Command padding
-pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() - size_of::<ConnectorNumberRaw>();
+pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>();
 
 /// Maximum support vendor-data length
 pub const MAX_VENDOR_DATA_LEN: usize = 14;
 
 /// Command arguments
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Args<T: PortId> {
-    /// Connector number
-    pub connector_number: T,
-}
-
-impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
-    type Output = Args<Out>;
-
-    fn map_port<F>(self, f: F) -> Self::Output
-    where
-        F: Fn(T) -> Out,
-    {
-        Args {
-            connector_number: f(self.connector_number),
-        }
-    }
-}
-
-impl<T: PortId> Default for Args<T> {
-    fn default() -> Self {
-        Self {
-            connector_number: T::from(0),
-        }
-    }
-}
+pub struct Args;
 
 /// Raw wire format of [`Args`]
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Zeroable, Pod)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ArgsRaw {
-    /// Connector number in bits 6:0
-    pub connector: u8,
     /// Reserved bytes, filling out the remainder of the command
     _reserved: [u8; COMMAND_PADDING],
 }
@@ -61,24 +33,19 @@ impl ArgsRaw {
     pub const LEN: usize = size_of::<Self>();
 }
 
-impl<T: PortId> From<Args<T>> for ArgsRaw {
+impl From<Args> for ArgsRaw {
     /// Converts the arguments into their raw wire format
-    fn from(args: Args<T>) -> Self {
-        let mut connector = ConnectorNumberRaw::default();
-        connector.set_connector_number(args.connector_number.into());
+    fn from(_args: Args) -> Self {
         Self {
-            connector: connector.0,
-            ..Default::default()
+            _reserved: [0; COMMAND_PADDING],
         }
     }
 }
 
-impl<T: PortId> From<ArgsRaw> for Args<T> {
+impl From<ArgsRaw> for Args {
     /// Reconstructs the arguments from their raw wire format
-    fn from(raw: ArgsRaw) -> Self {
-        Self {
-            connector_number: ConnectorNumberRaw(raw.connector).connector_number().into(),
-        }
+    fn from(_raw: ArgsRaw) -> Self {
+        Self
     }
 }
 
@@ -114,10 +81,6 @@ bitfield! {
     pub bool, ppm_policy_conflict, set_ppm_policy_conflict: 11;
     /// Swap rejected
     pub bool, swap_rejected, set_swap_rejected: 12;
-    /// Reverse current protection
-    pub bool, reverse_current_protection, set_reverse_current_protection: 13;
-    /// Set sink path rejected
-    pub bool, sink_path_rejected, set_sink_path_rejected: 14;
 }
 
 #[cfg(feature = "defmt")]
@@ -138,9 +101,7 @@ impl defmt::Format for InformationRaw {
             port_partner_rejected_swap: {}, \
             hard_reset: {}, \
             ppm_policy_conflict: {}, \
-            swap_rejected: {}, \
-            reverse_current_protection: {}, \
-            sink_path_rejected: {} }}",
+            swap_rejected: {} }}",
             self.0,
             self.unrecognized_command(),
             self.invalid_connector(),
@@ -155,8 +116,6 @@ impl defmt::Format for InformationRaw {
             self.hard_reset(),
             self.ppm_policy_conflict(),
             self.swap_rejected(),
-            self.reverse_current_protection(),
-            self.sink_path_rejected()
         )
     }
 }
@@ -191,10 +150,6 @@ pub struct Information {
     pub ppm_policy_conflict: bool,
     /// Swap rejected
     pub swap_rejected: bool,
-    /// Reverse current protection
-    pub reverse_current_protection: bool,
-    /// Set sink path rejected
-    pub sink_path_rejected: bool,
 }
 
 impl From<InformationRaw> for Information {
@@ -213,8 +168,6 @@ impl From<InformationRaw> for Information {
             hard_reset: raw.hard_reset(),
             ppm_policy_conflict: raw.ppm_policy_conflict(),
             swap_rejected: raw.swap_rejected(),
-            reverse_current_protection: raw.reverse_current_protection(),
-            sink_path_rejected: raw.sink_path_rejected(),
         }
     }
 }
@@ -235,8 +188,6 @@ impl From<Information> for InformationRaw {
         raw.set_hard_reset(info.hard_reset);
         raw.set_ppm_policy_conflict(info.ppm_policy_conflict);
         raw.set_swap_rejected(info.swap_rejected);
-        raw.set_reverse_current_protection(info.reverse_current_protection);
-        raw.set_sink_path_rejected(info.sink_path_rejected);
         raw
     }
 }
@@ -311,10 +262,6 @@ impl From<ResponseData> for ResponseDataRaw {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::GlobalPortId;
-
-    /// Mask of all bits defined by [`InformationRaw`]
-    const DEFINED_BITS: u16 = 0x7FFF;
 
     #[test]
     fn test_raw_len() {
@@ -324,25 +271,14 @@ mod test {
 
     #[test]
     fn test_args_raw_roundtrip() {
-        let encoded: [u8; ArgsRaw::LEN] = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00];
-        let args: Args<GlobalPortId> = Args {
-            connector_number: GlobalPortId(3),
-        };
+        let encoded: [u8; ArgsRaw::LEN] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let args: Args = Args;
 
         assert_eq!(
             bytemuck::must_cast::<_, [u8; ArgsRaw::LEN]>(ArgsRaw::from(args)),
             encoded
         );
         assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), args);
-    }
-
-    #[test]
-    fn test_information_roundtrip() {
-        for bit in 0..u16::BITS {
-            let raw = 1u16 << bit;
-            // Undefined bits are dropped by the roundtrip
-            assert_eq!(u16::from(Information::from(raw)), raw & DEFINED_BITS);
-        }
     }
 
     #[test]
