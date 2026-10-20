@@ -253,8 +253,6 @@ pub enum PowerOperationMode {
     TypeC1_5A = 0x4,
     /// Type-C 3A mode
     TypeC3A = 0x5,
-    /// Type-C 5A mode
-    TypeC5A = 0x6,
 }
 
 /// Invalid Power Operation Mode error, contains the raw value that failed to decode
@@ -272,7 +270,6 @@ impl TryFrom<u8> for PowerOperationMode {
             0x3 => Ok(PowerOperationMode::Pd),
             0x4 => Ok(PowerOperationMode::TypeC1_5A),
             0x5 => Ok(PowerOperationMode::TypeC3A),
-            0x6 => Ok(PowerOperationMode::TypeC5A),
             _ => Err(InvalidPowerOperationMode(val)),
         }
     }
