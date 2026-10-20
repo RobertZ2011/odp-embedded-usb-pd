@@ -659,7 +659,6 @@ mod tests {
         let mut lpm = GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
             lpm::connector_reset::Args {
                 connector_number: GlobalPortId(1),
-                hard_reset: true,
             },
         )));
         lpm.set_connector_number(GlobalPortId(2));
@@ -670,7 +669,6 @@ mod tests {
             GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
                 lpm::connector_reset::Args {
                     connector_number: GlobalPortId(2),
-                    hard_reset: true,
                 }
             )))
         );

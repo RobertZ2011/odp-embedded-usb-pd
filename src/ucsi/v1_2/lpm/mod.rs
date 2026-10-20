@@ -687,13 +687,12 @@ mod tests {
     fn test_decode_connector_reset() {
         let mut bytes = [0u8; COMMAND_LEN];
         bytes[0] = CommandType::ConnectorReset as u8;
-        bytes[2] = 0x81;
+        bytes[2] = 0x01;
 
         assert_eq!(
             decode(bytes).unwrap(),
             GlobalCommand::new(CommandData::ConnectorReset(connector_reset::Args {
                 connector_number: GlobalPortId(1),
-                hard_reset: true,
             }))
         );
     }
