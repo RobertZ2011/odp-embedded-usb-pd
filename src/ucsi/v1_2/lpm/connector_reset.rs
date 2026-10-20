@@ -14,8 +14,6 @@ pub const COMMAND_PADDING: usize = COMMAND_LEN - size_of::<CommandHeaderRaw>() -
 pub struct Args<T: PortId> {
     /// Connector number
     pub connector_number: T,
-    /// Perform a Hard Reset instead of a Data Reset
-    pub hard_reset: bool,
 }
 
 impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
@@ -27,7 +25,6 @@ impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
     {
         Args {
             connector_number: f(self.connector_number),
-            hard_reset: self.hard_reset,
         }
     }
 }
@@ -36,7 +33,6 @@ impl<T: PortId> Default for Args<T> {
     fn default() -> Self {
         Self {
             connector_number: T::from(0),
-            hard_reset: false,
         }
     }
 }
@@ -73,7 +69,6 @@ impl<T: PortId> From<Args<T>> for ArgsRaw {
     fn from(args: Args<T>) -> Self {
         let mut connector = ConnectorNumberRaw::default();
         connector.set_connector_number(args.connector_number.into());
-        connector.set_high_bit(args.hard_reset);
         Self {
             connector: connector.0,
             ..Default::default()
@@ -86,7 +81,6 @@ impl<T: PortId> From<ArgsRaw> for Args<T> {
         let connector = ConnectorNumberRaw(raw.connector);
         Self {
             connector_number: connector.connector_number().into(),
-            hard_reset: connector.high_bit(),
         }
     }
 }
@@ -104,10 +98,9 @@ mod test {
     #[test]
     fn test_args_raw_roundtrip() {
         // Hard reset on connector 1
-        let encoded: [u8; ArgsRaw::LEN] = [0x81, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00];
         let expected: Args<GlobalPortId> = Args {
             connector_number: GlobalPortId(1),
-            hard_reset: true,
         };
 
         assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), expected);
@@ -120,7 +113,6 @@ mod test {
         let encoded: [u8; ArgsRaw::LEN] = [0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let expected: Args<GlobalPortId> = Args {
             connector_number: GlobalPortId(3),
-            hard_reset: false,
         };
 
         assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), expected);

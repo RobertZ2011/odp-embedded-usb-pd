@@ -24,8 +24,6 @@ bitfield! {
     pub bool, rd, set_rd: 8;
     /// Drp
     pub bool, drp, set_drp: 9;
-    /// Disabled
-    pub bool, disabled, set_disabled: 10;
 }
 
 #[cfg(feature = "defmt")]
@@ -33,13 +31,12 @@ impl defmt::Format for ArgBitsRaw {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "ArgBitsRaw {{ .0: {}, connector_number: {}, rp: {}, rd: {}, drp: {}, disabled: {} }}",
+            "ArgBitsRaw {{ .0: {}, connector_number: {}, rp: {}, rd: {}, drp: {} }}",
             self.0,
             self.connector_number(),
             self.rp(),
             self.rd(),
             self.drp(),
-            self.disabled()
         )
     }
 }
@@ -56,8 +53,6 @@ pub struct Args<T: PortId> {
     pub rd: bool,
     /// Drp
     pub drp: bool,
-    /// Disabled
-    pub disabled: bool,
 }
 
 impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
@@ -72,7 +67,6 @@ impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
             rp: self.rp,
             rd: self.rd,
             drp: self.drp,
-            disabled: self.disabled,
         }
     }
 }
@@ -84,7 +78,6 @@ impl<T: PortId> Default for Args<T> {
             rp: false,
             rd: false,
             drp: false,
-            disabled: false,
         }
     }
 }
@@ -96,7 +89,6 @@ impl<T: PortId> From<ArgBitsRaw> for Args<T> {
             rp: raw.rp(),
             rd: raw.rd(),
             drp: raw.drp(),
-            disabled: raw.disabled(),
         }
     }
 }
@@ -108,7 +100,6 @@ impl<T: PortId> From<Args<T>> for ArgBitsRaw {
         raw.set_rp(args.rp);
         raw.set_rd(args.rd);
         raw.set_drp(args.drp);
-        raw.set_disabled(args.disabled);
         raw
     }
 }
@@ -168,7 +159,7 @@ mod test {
     use crate::GlobalPortId;
 
     /// Mask of all bits defined by [`ArgBitsRaw`]
-    const DEFINED_BITS: u16 = 0x07FF;
+    const DEFINED_BITS: u16 = 0x03FF;
 
     #[test]
     fn test_raw_len() {

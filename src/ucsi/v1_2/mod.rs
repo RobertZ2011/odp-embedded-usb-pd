@@ -4,7 +4,7 @@
 use bytemuck::{Pod, Zeroable};
 use pack1::U32LE;
 
-use crate::ucsi::MapPort;
+use crate::ucsi::{ConnectorNumber, MapPort};
 use crate::{GlobalPortId, LocalPortId, PdError, PortId};
 
 pub mod cci;
@@ -198,21 +198,19 @@ impl<T: PortId> Command<T> {
             Command::LpmCommand(cmd) => cmd.command_type(),
         }
     }
+}
 
-    /// Returns the connector this command targets
-    ///
+impl<T: PortId> ConnectorNumber<T> for Command<T> {
     /// PPM commands are not connector specific and return `None`.
-    pub fn connector_number(&self) -> Option<T> {
+    fn connector_number(&self) -> Option<T> {
         match self {
             Command::PpmCommand(_) => None,
-            Command::LpmCommand(cmd) => Some(cmd.connector_number()),
+            Command::LpmCommand(cmd) => cmd.connector_number(),
         }
     }
 
-    /// Sets the connector this command targets
-    ///
     /// Does nothing for PPM commands, which are not connector specific.
-    pub fn set_connector_number(&mut self, connector: T) -> &mut Self {
+    fn set_connector_number(&mut self, connector: T) -> &mut Self {
         match self {
             Command::PpmCommand(_) => (),
             Command::LpmCommand(cmd) => {
@@ -659,7 +657,6 @@ mod tests {
         let mut lpm = GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
             lpm::connector_reset::Args {
                 connector_number: GlobalPortId(1),
-                hard_reset: true,
             },
         )));
         lpm.set_connector_number(GlobalPortId(2));
@@ -670,7 +667,6 @@ mod tests {
             GlobalCommand::LpmCommand(lpm::Command::new(lpm::CommandData::ConnectorReset(
                 lpm::connector_reset::Args {
                     connector_number: GlobalPortId(2),
-                    hard_reset: true,
                 }
             )))
         );

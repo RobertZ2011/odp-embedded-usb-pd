@@ -9,18 +9,10 @@ bitfield! {
     pub struct CciRaw(u32);
     impl Debug;
 
-    /// End of message
-    pub bool, eom, set_eom: 0;
     /// Connector change on the given port
     pub u8, connector_change, set_connector_change: 7, 1;
     /// Length of returned data
     pub u8, data_len, set_data_len: 15, 8;
-    /// Vendor defined message
-    pub bool, vendor_message, set_vendor_message: 16;
-    /// Security request
-    pub bool, security_req, set_security_req: 23;
-    /// Firmware update request
-    pub bool, fw_update_req, set_fw_update_req: 24;
     /// Command not supported
     pub bool, not_supported, set_not_supported: 25;
     /// Cancel complete
@@ -44,18 +36,10 @@ bitfield! {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Cci<T: PortId> {
-    /// End of message
-    pub eom: bool,
     /// Connector change on the given port
     pub connector_change: T,
     /// Length of returned data
     pub data_len: u8,
-    /// Vendor defined message
-    pub vendor_message: bool,
-    /// Security request
-    pub security_req: bool,
-    /// Firmware update request
-    pub fw_update_req: bool,
     /// Command not supported
     pub not_supported: bool,
     /// Cancel complete
@@ -115,10 +99,6 @@ impl<T: PortId, Out: PortId> MapPort<T, Out> for Cci<T> {
     {
         Cci {
             connector_change: f(self.connector_change),
-            eom: self.eom,
-            vendor_message: self.vendor_message,
-            security_req: self.security_req,
-            fw_update_req: self.fw_update_req,
             not_supported: self.not_supported,
             cancel_complete: self.cancel_complete,
             reset_complete: self.reset_complete,
@@ -134,12 +114,8 @@ impl<T: PortId, Out: PortId> MapPort<T, Out> for Cci<T> {
 impl<T: PortId> From<CciRaw> for Cci<T> {
     fn from(raw: CciRaw) -> Self {
         Self {
-            eom: raw.eom(),
             connector_change: raw.connector_change().into(),
             data_len: raw.data_len(),
-            vendor_message: raw.vendor_message(),
-            security_req: raw.security_req(),
-            fw_update_req: raw.fw_update_req(),
             not_supported: raw.not_supported(),
             cancel_complete: raw.cancel_complete(),
             reset_complete: raw.reset_complete(),
@@ -155,12 +131,8 @@ impl<T: PortId> From<Cci<T>> for CciRaw {
     fn from(cci: Cci<T>) -> Self {
         let mut raw = CciRaw(0);
 
-        raw.set_eom(cci.eom);
         raw.set_connector_change(cci.connector_change.into());
         raw.set_data_len(cci.data_len);
-        raw.set_vendor_message(cci.vendor_message);
-        raw.set_security_req(cci.security_req);
-        raw.set_fw_update_req(cci.fw_update_req);
         raw.set_not_supported(cci.not_supported);
         raw.set_cancel_complete(cci.cancel_complete);
         raw.set_reset_complete(cci.reset_complete);
@@ -211,14 +183,10 @@ impl defmt::Format for CciRaw {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(
             fmt,
-            "CciRaw {{ .0: {}, eom: {}, connector_change: {}, data_len: {}, vendor_message: {}, security_req: {}, fw_update_req: {}, not_supported: {}, cancel_complete: {}, reset_complete: {}, busy: {}, ack_command: {}, error: {}, cmd_complete: {} }}",
+            "CciRaw {{ .0: {}, connector_change: {}, data_len: {}, not_supported: {}, cancel_complete: {}, reset_complete: {}, busy: {}, ack_command: {}, error: {}, cmd_complete: {} }}",
             self.0,
-            self.eom(),
             self.connector_change(),
             self.data_len(),
-            self.vendor_message(),
-            self.security_req(),
-            self.fw_update_req(),
             self.not_supported(),
             self.cancel_complete(),
             self.reset_complete(),
@@ -238,16 +206,8 @@ impl defmt::Format for CciRaw {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CciNoDataLen<T: PortId> {
-    /// End of message
-    pub eom: bool,
     /// Connector change on the given port
     pub connector_change: T,
-    /// Vendor defined message
-    pub vendor_message: bool,
-    /// Security request
-    pub security_req: bool,
-    /// Firmware update request
-    pub fw_update_req: bool,
     /// Command not supported
     pub not_supported: bool,
     /// Cancel complete
@@ -267,11 +227,7 @@ pub struct CciNoDataLen<T: PortId> {
 impl<T: PortId> CciNoDataLen<T> {
     pub fn into_cci(self, data_len: u8) -> Cci<T> {
         Cci {
-            eom: self.eom,
             connector_change: self.connector_change,
-            vendor_message: self.vendor_message,
-            security_req: self.security_req,
-            fw_update_req: self.fw_update_req,
             not_supported: self.not_supported,
             cancel_complete: self.cancel_complete,
             reset_complete: self.reset_complete,
@@ -293,10 +249,6 @@ impl<T: PortId, Out: PortId> MapPort<T, Out> for CciNoDataLen<T> {
     {
         CciNoDataLen {
             connector_change: f(self.connector_change),
-            eom: self.eom,
-            vendor_message: self.vendor_message,
-            security_req: self.security_req,
-            fw_update_req: self.fw_update_req,
             not_supported: self.not_supported,
             cancel_complete: self.cancel_complete,
             reset_complete: self.reset_complete,
@@ -311,11 +263,7 @@ impl<T: PortId, Out: PortId> MapPort<T, Out> for CciNoDataLen<T> {
 impl<T: PortId> From<Cci<T>> for CciNoDataLen<T> {
     fn from(cci: Cci<T>) -> Self {
         Self {
-            eom: cci.eom,
             connector_change: cci.connector_change,
-            vendor_message: cci.vendor_message,
-            security_req: cci.security_req,
-            fw_update_req: cci.fw_update_req,
             not_supported: cci.not_supported,
             cancel_complete: cci.cancel_complete,
             reset_complete: cci.reset_complete,
@@ -333,8 +281,8 @@ mod tests {
 
     /// All bits defined by [`CciRaw`]
     ///
-    /// Bits 22:17 are reserved.
-    const DEFINED_BITS: u32 = 0xFF81_FFFF;
+    /// Bits 0, 24:16 are reserved.
+    const DEFINED_BITS: u32 = 0xFE00_FFFE;
 
     #[test]
     fn test_cci_defined_bits_roundtrip() {
@@ -352,7 +300,6 @@ mod tests {
     #[test]
     fn test_cci_fields() {
         let cci = GlobalCci::from(0x8000_0502);
-        assert!(!cci.eom);
         assert_eq!(cci.connector_change, GlobalPortId(1));
         assert_eq!(cci.data_len, 5);
         assert!(cci.cmd_complete);
