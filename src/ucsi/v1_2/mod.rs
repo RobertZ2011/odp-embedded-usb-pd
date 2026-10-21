@@ -278,6 +278,8 @@ pub enum InvalidResponseData {
     InvalidCommandType(InvalidCommandType),
     /// Invalid LPM response data
     Lpm(lpm::InvalidResponseData),
+    /// Invalid CCI field combination
+    Cci(cci::InvalidFieldCombo),
 }
 
 impl From<InvalidCommandType> for InvalidResponseData {
@@ -442,21 +444,28 @@ impl<T: PortId, Out: PortId> MapPort<T, Out> for Response<T> {
     }
 }
 
-impl<T: PortId> From<Response<T>> for ResponseRaw {
+impl<T: PortId> TryFrom<Response<T>> for ResponseRaw {
+    type Error = InvalidResponseData;
     /// Converts a response into its raw wire format
     ///
     /// Only the first [`Response::valid_len`] bytes are valid.
-    fn from(response: Response<T>) -> Self {
+    fn try_from(response: Response<T>) -> Result<Self, Self::Error> {
         let data_len = response.data.map_or(0, |data| data.data_len());
-        ResponseRaw {
-            cci: U32LE::new(response.cci.into_cci(data_len as u8).into()),
+        Ok(ResponseRaw {
+            cci: U32LE::new(
+                response
+                    .cci
+                    .into_cci(data_len as u8)
+                    .try_into()
+                    .map_err(InvalidResponseData::Cci)?,
+            ),
             data: response.data.map_or(
                 ResponseDataRaw {
                     payload: [0u8; ResponseDataRaw::MAX_LEN],
                 },
                 Into::into,
             ),
-        }
+        })
     }
 }
 
@@ -468,7 +477,7 @@ impl<T: PortId> TryFrom<(CommandType, ResponseRaw)> for Response<T> {
     /// The command type is needed because a response carries no indication of which command
     /// produced it. Response data is only decoded for commands that produce it.
     fn try_from((command_type, raw): (CommandType, ResponseRaw)) -> Result<Self, Self::Error> {
-        let cci = cci::Cci::<T>::from(raw.cci.get());
+        let cci = cci::Cci::<T>::try_from(raw.cci.get()).map_err(InvalidResponseData::Cci)?;
         let data = if command_type.has_response() && cci.data_len != 0 {
             Some(ResponseData::try_from((command_type, raw.data))?)
         } else {
@@ -590,6 +599,7 @@ impl From<CommandHeader> for u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ucsi::v1_2::cci::InvalidFieldCombo;
     use crate::ucsi::v1_2::lpm::get_pdos;
 
     /// Test PPM command round-tripping
@@ -691,7 +701,7 @@ mod tests {
             data: Some(ResponseData::Ppm(ppm::ResponseData::GetCapability(response_data))),
         };
 
-        let raw = ResponseRaw::from(expected);
+        let raw = ResponseRaw::try_from(expected).unwrap();
         let encoded_bytes = bytemuck::must_cast::<_, [u8; RESPONSE_LEN]>(raw);
 
         assert_eq!(
@@ -700,10 +710,38 @@ mod tests {
         );
         assert_eq!(
             encoded_bytes.get(..size_of::<U32LE>()).unwrap(),
-            u32::from(expected.cci.into_cci(ppm::get_capability::RESPONSE_DATA_LEN as u8)).to_le_bytes()
+            u32::try_from(expected.cci.into_cci(ppm::get_capability::RESPONSE_DATA_LEN as u8))
+                .unwrap()
+                .to_le_bytes()
         );
         assert_eq!(encoded_bytes.get(size_of::<U32LE>()..).unwrap(), bytes);
         assert_eq!(Response::try_from((CommandType::GetCapability, raw)), Ok(expected));
+    }
+
+    /// Test PPM response encoding with an invalid CCI
+    #[test]
+    fn test_ppm_response_invalid_cci() {
+        let (response_data, _bytes) = ppm::get_capability::test::create_response_data();
+        let expected = GlobalResponse {
+            cci: cci::CciNoDataLen {
+                // Invalid combination: cmd_complete and reset_complete cannot both be set
+                cmd_complete: true,
+                reset_complete: true,
+                ..Default::default()
+            },
+            data: Some(ResponseData::Ppm(ppm::ResponseData::GetCapability(response_data))),
+        };
+
+        let result = ResponseRaw::try_from(expected);
+        assert_eq!(
+            result,
+            Err(InvalidResponseData::Cci(InvalidFieldCombo {
+                cmd_complete: true,
+                reset_complete: true,
+                data_len: true,
+                ..Default::default()
+            }))
+        );
     }
 
     /// Test LPM response encoding
@@ -717,7 +755,7 @@ mod tests {
             data: Some(ResponseData::Lpm(lpm::ResponseData::GetConnectorStatus(response_data))),
         };
 
-        let raw = ResponseRaw::from(expected);
+        let raw = ResponseRaw::try_from(expected).unwrap();
         let encoded_bytes = bytemuck::must_cast::<_, [u8; RESPONSE_LEN]>(raw);
 
         assert_eq!(
@@ -733,6 +771,32 @@ mod tests {
         assert_eq!(Response::try_from((CommandType::GetConnectorStatus, raw)), Ok(expected));
     }
 
+    /// Test LPM response encoding with an invalid CCI
+    #[test]
+    fn test_lpm_response_invalid_cci() {
+        let (response_data, _bytes) = lpm::get_connector_status::test::create_response_data();
+        let expected = GlobalResponse {
+            cci: cci::CciNoDataLen {
+                // Invalid combination: cmd_complete and reset_complete cannot both be set
+                cmd_complete: true,
+                reset_complete: true,
+                ..Default::default()
+            },
+            data: Some(ResponseData::Lpm(lpm::ResponseData::GetConnectorStatus(response_data))),
+        };
+
+        let result = ResponseRaw::try_from(expected);
+        assert_eq!(
+            result,
+            Err(InvalidResponseData::Cci(InvalidFieldCombo {
+                cmd_complete: true,
+                reset_complete: true,
+                data_len: true,
+                ..Default::default()
+            }))
+        );
+    }
+
     /// Commands without response data produce a CCI-only response
     #[test]
     fn test_response_without_data() {
@@ -741,7 +805,7 @@ mod tests {
             data: None,
         };
 
-        let raw = ResponseRaw::from(expected);
+        let raw = ResponseRaw::try_from(expected).unwrap();
 
         assert_eq!(expected.valid_len(), size_of::<U32LE>());
         assert_eq!(Response::try_from((CommandType::AckCcCi, raw)), Ok(expected));
@@ -813,8 +877,8 @@ mod tests {
             }))),
         };
 
-        let raw = ResponseRaw::from(response_data);
-        let cci = cci::Cci::<GlobalPortId>::from(raw.cci.get());
+        let raw = ResponseRaw::try_from(response_data).unwrap();
+        let cci = cci::Cci::<GlobalPortId>::try_from(raw.cci.get()).unwrap();
         assert_eq!(cci.data_len, 16);
     }
 }
