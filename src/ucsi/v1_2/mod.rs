@@ -28,8 +28,7 @@ pub enum CommandType {
     GetConnectorCapability,
     SetCcom,
     SetUor,
-    SetPdm,
-    SetPdr,
+    SetPdr = 0x0B,
     GetAlternateModes,
     GetCamSupported,
     GetCurrentCam,
@@ -61,6 +60,7 @@ impl CommandType {
                 | CommandType::SetUor
                 | CommandType::SetPdr
                 | CommandType::SetNewCam
+                | CommandType::SetPowerLevel
         )
     }
 }
@@ -90,7 +90,6 @@ impl TryFrom<u8> for CommandType {
             0x07 => Ok(CommandType::GetConnectorCapability),
             0x08 => Ok(CommandType::SetCcom),
             0x09 => Ok(CommandType::SetUor),
-            0x0A => Ok(CommandType::SetPdm),
             0x0B => Ok(CommandType::SetPdr),
             0x0C => Ok(CommandType::GetAlternateModes),
             0x0D => Ok(CommandType::GetCamSupported),
@@ -750,7 +749,7 @@ mod tests {
     /// Every defined command type round-trips through the raw header, preserving the data length
     #[test]
     fn test_command_header_roundtrip() {
-        const COMMAND_TYPES: [CommandType; 21] = [
+        const COMMAND_TYPES: [CommandType; 20] = [
             CommandType::PpmReset,
             CommandType::Cancel,
             CommandType::ConnectorReset,
@@ -760,7 +759,6 @@ mod tests {
             CommandType::GetConnectorCapability,
             CommandType::SetCcom,
             CommandType::SetUor,
-            CommandType::SetPdm,
             CommandType::SetPdr,
             CommandType::GetAlternateModes,
             CommandType::GetCamSupported,
@@ -816,5 +814,30 @@ mod tests {
         let raw = ResponseRaw::from(response_data);
         let cci = cci::Cci::<GlobalPortId>::from(raw.cci.get());
         assert_eq!(cci.data_len, 16);
+    }
+
+    /// Test all values of [`CommandType::has_response`]
+    #[test]
+    fn test_command_type_has_response() {
+        assert_eq!(CommandType::PpmReset.has_response(), false);
+        assert_eq!(CommandType::Cancel.has_response(), false);
+        assert_eq!(CommandType::ConnectorReset.has_response(), false);
+        assert_eq!(CommandType::AckCcCi.has_response(), false);
+        assert_eq!(CommandType::SetNotificationEnable.has_response(), false);
+        assert_eq!(CommandType::GetCapability.has_response(), true);
+        assert_eq!(CommandType::GetConnectorCapability.has_response(), true);
+        assert_eq!(CommandType::SetCcom.has_response(), false);
+        assert_eq!(CommandType::SetUor.has_response(), false);
+        assert_eq!(CommandType::SetPdr.has_response(), false);
+        assert_eq!(CommandType::GetAlternateModes.has_response(), true);
+        assert_eq!(CommandType::GetCamSupported.has_response(), true);
+        assert_eq!(CommandType::GetCurrentCam.has_response(), true);
+        assert_eq!(CommandType::SetNewCam.has_response(), false);
+        assert_eq!(CommandType::GetPdos.has_response(), true);
+        assert_eq!(CommandType::GetCableProperty.has_response(), true);
+        assert_eq!(CommandType::GetConnectorStatus.has_response(), true);
+        assert_eq!(CommandType::GetErrorStatus.has_response(), true);
+        assert_eq!(CommandType::SetPowerLevel.has_response(), false);
+        assert_eq!(CommandType::GetPdMessage.has_response(), true);
     }
 }
