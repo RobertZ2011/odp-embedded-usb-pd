@@ -55,6 +55,17 @@ pub struct Args<T: PortId> {
     pub accept_swap: bool,
 }
 
+impl<T: PortId> Args<T> {
+    /// Validate the data role fields
+    pub fn validate(&self) -> Result<(), InvalidDataRole> {
+        InvalidDataRole {
+            dfp: self.dfp,
+            ufp: self.ufp,
+        }
+        .validate()
+    }
+}
+
 impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
     type Output = Args<Out>;
 
@@ -82,37 +93,74 @@ impl<T: PortId> Default for Args<T> {
     }
 }
 
-impl<T: PortId> From<ArgBitsRaw> for Args<T> {
-    fn from(raw: ArgBitsRaw) -> Self {
-        Self {
-            connector_number: raw.connector_number().into(),
-            dfp: raw.dfp(),
-            ufp: raw.ufp(),
-            accept_swap: raw.accept_swap(),
+/// Error used when both DFP and UFP are set to invalid values
+///
+/// Per the UCSI spec, the dfp and ufp fields cannot both be set to the same value.
+/// See 4.5.9 for more details
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InvalidDataRole {
+    /// Indicates whether DFP was set
+    pub dfp: bool,
+    /// Indicates whether UFP was set
+    pub ufp: bool,
+}
+
+impl InvalidDataRole {
+    pub fn validate(&self) -> Result<(), Self> {
+        if self.dfp == self.ufp {
+            Err(Self {
+                dfp: self.dfp,
+                ufp: self.ufp,
+            })
+        } else {
+            Ok(())
         }
     }
 }
 
-impl<T: PortId> From<Args<T>> for ArgBitsRaw {
-    fn from(args: Args<T>) -> Self {
+impl<T: PortId> TryFrom<ArgBitsRaw> for Args<T> {
+    type Error = InvalidDataRole;
+
+    fn try_from(raw: ArgBitsRaw) -> Result<Self, Self::Error> {
+        let new = Self {
+            connector_number: raw.connector_number().into(),
+            dfp: raw.dfp(),
+            ufp: raw.ufp(),
+            accept_swap: raw.accept_swap(),
+        };
+        new.validate()?;
+        Ok(new)
+    }
+}
+
+impl<T: PortId> TryFrom<Args<T>> for ArgBitsRaw {
+    type Error = InvalidDataRole;
+
+    fn try_from(args: Args<T>) -> Result<Self, Self::Error> {
+        args.validate()?;
         let mut raw = ArgBitsRaw(0);
         raw.set_connector_number(args.connector_number.into());
         raw.set_dfp(args.dfp);
         raw.set_ufp(args.ufp);
         raw.set_accept_swap(args.accept_swap);
-        raw
+        Ok(raw)
     }
 }
 
-impl<T: PortId> From<u16> for Args<T> {
-    fn from(value: u16) -> Self {
-        ArgBitsRaw(value).into()
+impl<T: PortId> TryFrom<u16> for Args<T> {
+    type Error = InvalidDataRole;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        ArgBitsRaw(value).try_into()
     }
 }
 
-impl<T: PortId> From<Args<T>> for u16 {
-    fn from(args: Args<T>) -> Self {
-        ArgBitsRaw::from(args).0
+impl<T: PortId> TryFrom<Args<T>> for u16 {
+    type Error = InvalidDataRole;
+
+    fn try_from(args: Args<T>) -> Result<Self, Self::Error> {
+        Ok(ArgBitsRaw::try_from(args)?.0)
     }
 }
 
@@ -138,18 +186,22 @@ impl defmt::Format for ArgsRaw {
     }
 }
 
-impl<T: PortId> From<Args<T>> for ArgsRaw {
-    fn from(args: Args<T>) -> Self {
-        Self {
-            bits: U16LE::new(args.into()),
+impl<T: PortId> TryFrom<Args<T>> for ArgsRaw {
+    type Error = InvalidDataRole;
+
+    fn try_from(args: Args<T>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            bits: U16LE::new(u16::try_from(args)?),
             ..Default::default()
-        }
+        })
     }
 }
 
-impl<T: PortId> From<ArgsRaw> for Args<T> {
-    fn from(raw: ArgsRaw) -> Self {
-        raw.bits.get().into()
+impl<T: PortId> TryFrom<ArgsRaw> for Args<T> {
+    type Error = InvalidDataRole;
+
+    fn try_from(raw: ArgsRaw) -> Result<Self, Self::Error> {
+        raw.bits.get().try_into()
     }
 }
 
@@ -158,21 +210,9 @@ mod test {
     use super::*;
     use crate::GlobalPortId;
 
-    /// Mask of all bits defined by [`ArgBitsRaw`]
-    const DEFINED_BITS: u16 = 0x03FF;
-
     #[test]
     fn test_raw_len() {
         assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
-    }
-
-    #[test]
-    fn test_arg_bits_roundtrip() {
-        for bit in 0..u16::BITS {
-            let raw = 1u16 << bit;
-            // Undefined bits are dropped by the roundtrip
-            assert_eq!(u16::from(Args::<GlobalPortId>::from(raw)), raw & DEFINED_BITS);
-        }
     }
 
     #[test]
@@ -186,18 +226,188 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), expected);
-        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(expected).unwrap());
         assert_eq!(bytes, encoded);
     }
 
     #[test]
     fn test_args_raw_ignores_reserved() {
-        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0xF8, 0xFF, 0xFF, 0xFF, 0xFF];
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let expected: Args<GlobalPortId> = Args {
             connector_number: GlobalPortId(1),
+            ufp: true,
+            accept_swap: true,
             ..Default::default()
         };
-        assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), expected);
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        assert_eq!(
+            bytemuck::must_cast::<ArgsRaw, [u8; ArgsRaw::LEN]>(expected.try_into().unwrap()),
+            [0x01, 0x03, 0x00, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn test_into_raw_validation_logic() {
+        // Test basic values
+        let raw_args = ArgsRaw::try_from(Args {
+            connector_number: GlobalPortId(1),
+            dfp: true,
+            ufp: false,
+            ..Default::default()
+        });
+        assert_eq!(
+            raw_args,
+            Ok(ArgsRaw {
+                bits: U16LE::new(0x0081),
+                ..Default::default()
+            })
+        );
+
+        let raw_args = ArgsRaw::try_from(Args {
+            connector_number: GlobalPortId(1),
+            dfp: true,
+            ufp: true,
+            ..Default::default()
+        });
+        assert_eq!(raw_args, Err(InvalidDataRole { dfp: true, ufp: true }));
+
+        let raw_args = ArgsRaw::try_from(Args {
+            connector_number: GlobalPortId(1),
+            dfp: false,
+            ufp: false,
+            ..Default::default()
+        });
+        assert_eq!(raw_args, Err(InvalidDataRole { dfp: false, ufp: false }));
+
+        // Verify that the accept swap flag has no effect on validation
+        let raw_args = ArgsRaw::try_from(Args {
+            connector_number: GlobalPortId(1),
+            dfp: true,
+            ufp: false,
+            accept_swap: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            raw_args,
+            Ok(ArgsRaw {
+                bits: U16LE::new(0x0281),
+                ..Default::default()
+            })
+        );
+
+        let raw_args = ArgsRaw::try_from(Args {
+            connector_number: GlobalPortId(1),
+            dfp: true,
+            ufp: true,
+            accept_swap: true,
+            ..Default::default()
+        });
+        assert_eq!(raw_args, Err(InvalidDataRole { dfp: true, ufp: true }));
+
+        let raw_args = ArgsRaw::try_from(Args {
+            connector_number: GlobalPortId(1),
+            dfp: false,
+            ufp: false,
+            accept_swap: true,
+            ..Default::default()
+        });
+        assert_eq!(raw_args, Err(InvalidDataRole { dfp: false, ufp: false }));
+    }
+
+    #[test]
+    fn test_from_raw_validation_logic() {
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0081),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Ok(Args {
+                connector_number: GlobalPortId(1),
+                dfp: true,
+                ufp: false,
+                accept_swap: false,
+            })
+        );
+
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0101),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Ok(Args {
+                connector_number: GlobalPortId(1),
+                dfp: false,
+                ufp: true,
+                accept_swap: false,
+            })
+        );
+
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0181),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Err(InvalidDataRole { dfp: true, ufp: true })
+        );
+
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0001),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Err(InvalidDataRole { dfp: false, ufp: false })
+        );
+
+        // The accept swap flag must not affect data role validation.
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0281),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Ok(Args {
+                connector_number: GlobalPortId(1),
+                dfp: true,
+                ufp: false,
+                accept_swap: true,
+            })
+        );
+
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0301),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Ok(Args {
+                connector_number: GlobalPortId(1),
+                dfp: false,
+                ufp: true,
+                accept_swap: true,
+            })
+        );
+
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0381),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Err(InvalidDataRole { dfp: true, ufp: true })
+        );
+
+        let args_raw = ArgsRaw {
+            bits: U16LE::new(0x0201),
+            ..Default::default()
+        };
+        assert_eq!(
+            Args::<GlobalPortId>::try_from(args_raw),
+            Err(InvalidDataRole { dfp: false, ufp: false })
+        );
     }
 }
