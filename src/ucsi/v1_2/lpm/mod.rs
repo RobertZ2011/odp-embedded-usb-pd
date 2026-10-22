@@ -52,6 +52,8 @@ pub enum InvalidCommand {
     InvalidDataRole(set_uor::InvalidDataRole),
     /// Invalid SET_CCOM flags
     InvalidCcomFlags(set_ccom::InvalidCcomFlags),
+    /// Invalid SET_PDR flags
+    InvalidPdrFlags(set_pdr::InvalidPdrFlags),
 }
 
 impl From<InvalidCommandType> for InvalidCommand {
@@ -314,7 +316,9 @@ impl<T: PortId> TryFrom<Command<T>> for CommandRaw {
             CommandData::SetUor(args) => {
                 bytemuck::must_cast(set_uor::ArgsRaw::try_from(args).map_err(InvalidCommand::InvalidDataRole)?)
             }
-            CommandData::SetPdr(args) => bytemuck::must_cast(set_pdr::ArgsRaw::from(args)),
+            CommandData::SetPdr(args) => {
+                bytemuck::must_cast(set_pdr::ArgsRaw::try_from(args).map_err(InvalidCommand::InvalidPdrFlags)?)
+            }
             CommandData::GetAlternateModes(args) => bytemuck::must_cast(get_alternate_modes::ArgsRaw::from(args)),
             CommandData::GetCamSupported(args) => bytemuck::must_cast(get_cam_supported::ArgsRaw::from(args)),
             CommandData::GetCurrentCam(args) => bytemuck::must_cast(get_current_cam::ArgsRaw::from(args)),
@@ -370,7 +374,11 @@ impl<T: PortId> TryFrom<CommandRaw> for Command<T> {
                     .try_into()
                     .map_err(InvalidCommand::InvalidDataRole)?,
             ),
-            CommandType::SetPdr => CommandData::SetPdr(bytemuck::must_cast::<_, set_pdr::ArgsRaw>(payload).into()),
+            CommandType::SetPdr => CommandData::SetPdr(
+                bytemuck::must_cast::<_, set_pdr::ArgsRaw>(payload)
+                    .try_into()
+                    .map_err(InvalidCommand::InvalidPdrFlags)?,
+            ),
             CommandType::GetAlternateModes => CommandData::GetAlternateModes(
                 bytemuck::must_cast::<_, get_alternate_modes::ArgsRaw>(payload).try_into()?,
             ),
@@ -1056,7 +1064,15 @@ mod tests {
                     accept_swap: false,
                 }),
             ),
-            (true, CommandData::SetPdr(Default::default())),
+            (
+                true,
+                CommandData::SetPdr(set_pdr::Args {
+                    connector_number: GlobalPortId(0),
+                    swap_source: true,
+                    swap_sink: false,
+                    accept_swap: false,
+                }),
+            ),
             (true, CommandData::GetAlternateModes(Default::default())),
             (true, CommandData::GetCamSupported(Default::default())),
             (true, CommandData::GetCurrentCam(Default::default())),
