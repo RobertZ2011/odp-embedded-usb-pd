@@ -50,6 +50,8 @@ pub enum InvalidCommand {
     InvalidPdMessageArgs(get_pd_message::InvalidArgs),
     /// Invalid SET_UOR arguments
     InvalidDataRole(set_uor::InvalidDataRole),
+    /// Invalid SET_CCOM flags
+    InvalidCcomFlags(set_ccom::InvalidCcomFlags),
 }
 
 impl From<InvalidCommandType> for InvalidCommand {
@@ -306,7 +308,9 @@ impl<T: PortId> TryFrom<Command<T>> for CommandRaw {
             CommandData::SetPowerLevel(args) => bytemuck::must_cast(set_power_level::ArgsRaw::try_from(args)?),
             CommandData::SetNewCam(args) => bytemuck::must_cast(set_new_cam::ArgsRaw::from(args)),
             CommandData::GetErrorStatus(args) => bytemuck::must_cast(get_error_status::ArgsRaw::from(args)),
-            CommandData::SetCcom(args) => bytemuck::must_cast(set_ccom::ArgsRaw::from(args)),
+            CommandData::SetCcom(args) => {
+                bytemuck::must_cast(set_ccom::ArgsRaw::try_from(args).map_err(InvalidCommand::InvalidCcomFlags)?)
+            }
             CommandData::SetUor(args) => {
                 bytemuck::must_cast(set_uor::ArgsRaw::try_from(args).map_err(InvalidCommand::InvalidDataRole)?)
             }
@@ -356,7 +360,11 @@ impl<T: PortId> TryFrom<CommandRaw> for Command<T> {
             CommandType::GetErrorStatus => {
                 CommandData::GetErrorStatus(bytemuck::must_cast::<_, get_error_status::ArgsRaw>(payload).into())
             }
-            CommandType::SetCcom => CommandData::SetCcom(bytemuck::must_cast::<_, set_ccom::ArgsRaw>(payload).into()),
+            CommandType::SetCcom => CommandData::SetCcom(
+                bytemuck::must_cast::<_, set_ccom::ArgsRaw>(payload)
+                    .try_into()
+                    .map_err(InvalidCommand::InvalidCcomFlags)?,
+            ),
             CommandType::SetUor => CommandData::SetUor(
                 bytemuck::must_cast::<_, set_uor::ArgsRaw>(payload)
                     .try_into()
@@ -1030,7 +1038,15 @@ mod tests {
             (true, CommandData::SetPowerLevel(Default::default())),
             (true, CommandData::SetNewCam(Default::default())),
             (false, CommandData::GetErrorStatus(Default::default())),
-            (true, CommandData::SetCcom(Default::default())),
+            (
+                true,
+                CommandData::SetCcom(set_ccom::Args {
+                    connector_number: GlobalPortId(0),
+                    rp: true,
+                    rd: false,
+                    drp: false,
+                }),
+            ),
             (
                 true,
                 CommandData::SetUor(set_uor::Args {
