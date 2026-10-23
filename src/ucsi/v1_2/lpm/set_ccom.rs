@@ -55,6 +55,17 @@ pub struct Args<T: PortId> {
     pub drp: bool,
 }
 
+impl<T: PortId> Args<T> {
+    pub fn validate(&self) -> Result<(), InvalidCcomFlags> {
+        InvalidCcomFlags {
+            rp: self.rp,
+            rd: self.rd,
+            drp: self.drp,
+        }
+        .validate()
+    }
+}
+
 impl<T: PortId, Out: PortId> crate::ucsi::MapPort<T, Out> for Args<T> {
     type Output = Args<Out>;
 
@@ -82,37 +93,74 @@ impl<T: PortId> Default for Args<T> {
     }
 }
 
-impl<T: PortId> From<ArgBitsRaw> for Args<T> {
-    fn from(raw: ArgBitsRaw) -> Self {
-        Self {
-            connector_number: raw.connector_number().into(),
-            rp: raw.rp(),
-            rd: raw.rd(),
-            drp: raw.drp(),
+/// Error used when RP, RD, and DRP are all false
+///
+/// Per the UCSI spec, it is illegal to set all these to false
+/// See 4.5.8 for more details.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InvalidCcomFlags {
+    /// RP value
+    pub rp: bool,
+    /// RD value
+    pub rd: bool,
+    /// DRP value
+    pub drp: bool,
+}
+
+impl InvalidCcomFlags {
+    /// Validates the current combination of flags
+    fn validate(&self) -> Result<(), Self> {
+        if !self.rp && !self.rd && !self.drp {
+            Err(*self)
+        } else {
+            Ok(())
         }
     }
 }
 
-impl<T: PortId> From<Args<T>> for ArgBitsRaw {
-    fn from(args: Args<T>) -> Self {
+impl<T: PortId> TryFrom<ArgBitsRaw> for Args<T> {
+    type Error = InvalidCcomFlags;
+
+    fn try_from(raw: ArgBitsRaw) -> Result<Self, Self::Error> {
+        let args = Self {
+            connector_number: raw.connector_number().into(),
+            rp: raw.rp(),
+            rd: raw.rd(),
+            drp: raw.drp(),
+        };
+        args.validate()?;
+        Ok(args)
+    }
+}
+
+impl<T: PortId> TryFrom<Args<T>> for ArgBitsRaw {
+    type Error = InvalidCcomFlags;
+
+    fn try_from(args: Args<T>) -> Result<Self, Self::Error> {
+        args.validate()?;
         let mut raw = ArgBitsRaw(0);
         raw.set_connector_number(args.connector_number.into());
         raw.set_rp(args.rp);
         raw.set_rd(args.rd);
         raw.set_drp(args.drp);
-        raw
+        Ok(raw)
     }
 }
 
-impl<T: PortId> From<u16> for Args<T> {
-    fn from(value: u16) -> Self {
-        ArgBitsRaw(value).into()
+impl<T: PortId> TryFrom<u16> for Args<T> {
+    type Error = InvalidCcomFlags;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        ArgBitsRaw(value).try_into()
     }
 }
 
-impl<T: PortId> From<Args<T>> for u16 {
-    fn from(args: Args<T>) -> Self {
-        ArgBitsRaw::from(args).0
+impl<T: PortId> TryFrom<Args<T>> for u16 {
+    type Error = InvalidCcomFlags;
+
+    fn try_from(args: Args<T>) -> Result<Self, Self::Error> {
+        Ok(ArgBitsRaw::try_from(args)?.0)
     }
 }
 
@@ -138,18 +186,22 @@ impl defmt::Format for ArgsRaw {
     }
 }
 
-impl<T: PortId> From<Args<T>> for ArgsRaw {
-    fn from(args: Args<T>) -> Self {
-        Self {
-            bits: U16LE::new(args.into()),
+impl<T: PortId> TryFrom<Args<T>> for ArgsRaw {
+    type Error = InvalidCcomFlags;
+
+    fn try_from(args: Args<T>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            bits: U16LE::new(args.try_into()?),
             ..Default::default()
-        }
+        })
     }
 }
 
-impl<T: PortId> From<ArgsRaw> for Args<T> {
-    fn from(raw: ArgsRaw) -> Self {
-        raw.bits.get().into()
+impl<T: PortId> TryFrom<ArgsRaw> for Args<T> {
+    type Error = InvalidCcomFlags;
+
+    fn try_from(raw: ArgsRaw) -> Result<Self, Self::Error> {
+        raw.bits.get().try_into()
     }
 }
 
@@ -158,21 +210,9 @@ mod test {
     use super::*;
     use crate::GlobalPortId;
 
-    /// Mask of all bits defined by [`ArgBitsRaw`]
-    const DEFINED_BITS: u16 = 0x03FF;
-
     #[test]
     fn test_raw_len() {
         assert_eq!(ArgsRaw::LEN, COMMAND_LEN - size_of::<CommandHeaderRaw>());
-    }
-
-    #[test]
-    fn test_arg_bits_roundtrip() {
-        for bit in 0..u16::BITS {
-            let raw = 1u16 << bit;
-            // Undefined bits are dropped by the roundtrip
-            assert_eq!(u16::from(Args::<GlobalPortId>::from(raw)), raw & DEFINED_BITS);
-        }
     }
 
     #[test]
@@ -186,18 +226,187 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), expected);
-        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::from(expected));
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(expected).unwrap());
         assert_eq!(bytes, encoded);
     }
 
     #[test]
     fn test_args_raw_ignores_reserved() {
-        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0xF8, 0xFF, 0xFF, 0xFF, 0xFF];
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0xFB, 0xFF, 0xFF, 0xFF, 0xFF];
         let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rd: true,
+            drp: true,
+            ..Default::default()
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+    }
+
+    #[test]
+    fn test_into_raw_validation_logic() {
+        assert_eq!(
+            ArgsRaw::try_from(Args {
+                connector_number: GlobalPortId(1),
+                rp: false,
+                rd: false,
+                drp: false,
+            }),
+            Err(InvalidCcomFlags {
+                rp: false,
+                rd: false,
+                drp: false
+            })
+        );
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0x02, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: false,
+            rd: false,
+            drp: true,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0x01, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: false,
+            rd: true,
+            drp: false,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x01, 0x03, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: false,
+            rd: true,
+            drp: true,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x81, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: true,
+            rd: false,
+            drp: false,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x81, 0x02, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: true,
+            rd: false,
+            drp: true,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x81, 0x01, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: true,
+            rd: true,
+            drp: false,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+
+        let encoded: [u8; ArgsRaw::LEN] = [0x81, 0x03, 0x00, 0x00, 0x00, 0x00];
+        let expected: Args<GlobalPortId> = Args {
+            connector_number: GlobalPortId(1),
+            rp: true,
+            rd: true,
+            drp: true,
+        };
+        assert_eq!(Args::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), Ok(expected));
+    }
+
+    #[test]
+    fn test_from_raw_validation_logic() {
+        let base: Args<GlobalPortId> = Args {
             connector_number: GlobalPortId(1),
             ..Default::default()
         };
-        assert_eq!(Args::from(bytemuck::must_cast::<_, ArgsRaw>(encoded)), expected);
+
+        // 8 possible values, try them all
+        let none = Args {
+            rp: false,
+            rd: false,
+            drp: false,
+            ..base
+        };
+        assert_eq!(
+            ArgsRaw::try_from(none),
+            Err(InvalidCcomFlags {
+                rp: false,
+                rd: false,
+                drp: false
+            })
+        );
+
+        let drp = Args {
+            rp: false,
+            rd: false,
+            drp: true,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(drp).unwrap());
+        assert_eq!(bytes, [0x01, 0x02, 0x00, 0x00, 0x00, 0x00]);
+
+        let rd = Args {
+            rp: false,
+            rd: true,
+            drp: false,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(rd).unwrap());
+        assert_eq!(bytes, [0x01, 0x01, 0x00, 0x00, 0x00, 0x00]);
+
+        let rd_drp = Args {
+            rp: false,
+            rd: true,
+            drp: true,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(rd_drp).unwrap());
+        assert_eq!(bytes, [0x01, 0x03, 0x00, 0x00, 0x00, 0x00]);
+
+        let rp = Args {
+            rp: true,
+            rd: false,
+            drp: false,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(rp).unwrap());
+        assert_eq!(bytes, [0x81, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+        let rp_drp = Args {
+            rp: true,
+            rd: false,
+            drp: true,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(rp_drp).unwrap());
+        assert_eq!(bytes, [0x81, 0x02, 0x00, 0x00, 0x00, 0x00]);
+
+        let rp_rd = Args {
+            rp: true,
+            rd: true,
+            drp: false,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(rp_rd).unwrap());
+        assert_eq!(bytes, [0x81, 0x01, 0x00, 0x00, 0x00, 0x00]);
+
+        let all = Args {
+            rp: true,
+            rd: true,
+            drp: true,
+            ..base
+        };
+        let bytes: [u8; ArgsRaw::LEN] = bytemuck::must_cast(ArgsRaw::try_from(all).unwrap());
+        assert_eq!(bytes, [0x81, 0x03, 0x00, 0x00, 0x00, 0x00]);
     }
 }
