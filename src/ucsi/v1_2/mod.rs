@@ -873,7 +873,7 @@ mod tests {
                     message_type: lpm::get_pd_message::MessageType::BatteryCap,
                 },
             ))),
-            [0x15, 0, 0x83, 0x08, 0x01, 0x02, 0, 0],
+            [0x15, 0x00, 0x83, 0x08, 0x04, 0x08, 0x00, 0x00],
         );
     }
 
