@@ -336,7 +336,7 @@ impl From<AvsRaw> for AvsData {
             no_usb_suspend: raw.no_usb_suspend(),
             unchunked_extended_messages_support: raw.unchunked_extended_messages_support(),
             epr_capable: raw.epr_capable(),
-            output_voltage_mv: raw.output_voltage() * MV20_UNIT,
+            output_voltage_mv: raw.output_voltage() * MV25_UNIT,
             operating_current_ma: raw.operating_current() * MA50_UNIT,
         }
     }
@@ -351,7 +351,7 @@ impl From<AvsData> for u32 {
         raw.set_no_usb_suspend(data.no_usb_suspend);
         raw.set_unchunked_extended_messages_support(data.unchunked_extended_messages_support);
         raw.set_epr_capable(data.epr_capable);
-        raw.set_output_voltage(data.output_voltage_mv / MV20_UNIT);
+        raw.set_output_voltage(data.output_voltage_mv / MV25_UNIT);
         raw.set_operating_current(data.operating_current_ma / MA50_UNIT);
         raw.0
     }
@@ -493,7 +493,7 @@ mod tests {
             no_usb_suspend: true,
             unchunked_extended_messages_support: false,
             epr_capable: true,
-            output_voltage_mv: 20,
+            output_voltage_mv: 25,
             operating_current_ma: 100,
         });
         assert_eq!(rdo, expected);
