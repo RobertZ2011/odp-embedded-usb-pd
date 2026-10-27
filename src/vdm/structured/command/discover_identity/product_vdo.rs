@@ -24,11 +24,11 @@ bitfield::bitfield! {
     pub struct Raw(u32);
     impl Debug;
 
-    /// See [`ProductVdo::usb_product_id`].
-    pub u16, usb_product_id, set_usb_product_id: 15, 0;
-
     /// See [`ProductVdo::bcd_device`].
-    pub u16, bcd_device, set_bcd_device: 31, 16
+    pub u16, bcd_device, set_bcd_device: 15, 0;
+
+    /// See [`ProductVdo::usb_product_id`].
+    pub u16, usb_product_id, set_usb_product_id: 31, 16;
 }
 
 impl From<Raw> for ProductVdo {
@@ -50,4 +50,11 @@ impl From<[u8; 4]> for ProductVdo {
     fn from(bytes: [u8; 4]) -> Self {
         u32::from_le_bytes(bytes).into()
     }
+}
+
+#[test]
+fn decodes_from_little_endian_bytes() {
+    let vdo = ProductVdo::from([0x00, 0x02, 0x34, 0x12]);
+    assert_eq!(vdo.usb_product_id, ProductId(0x1234));
+    assert_eq!(vdo.bcd_device, Bcd(0x0200));
 }
