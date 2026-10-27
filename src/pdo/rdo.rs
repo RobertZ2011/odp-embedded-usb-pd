@@ -31,7 +31,7 @@ impl Rdo {
             PdoKind::Battery => Rdo::Battery(BatteryRaw(rdo).into()),
             PdoKind::Augmented => match pdo.apdo_kind()? {
                 ApdoKind::SprPps => Rdo::Pps(PpsRaw(rdo).into()),
-                ApdoKind::EprAvs => Rdo::Pps(PpsRaw(rdo).into()),
+                ApdoKind::EprAvs => Rdo::Avs(AvsRaw(rdo).into()),
                 ApdoKind::SprAvs => Rdo::Avs(AvsRaw(rdo).into()),
             },
         })
@@ -336,7 +336,7 @@ impl From<AvsRaw> for AvsData {
             no_usb_suspend: raw.no_usb_suspend(),
             unchunked_extended_messages_support: raw.unchunked_extended_messages_support(),
             epr_capable: raw.epr_capable(),
-            output_voltage_mv: raw.output_voltage() * MV20_UNIT,
+            output_voltage_mv: raw.output_voltage() * MV25_UNIT,
             operating_current_ma: raw.operating_current() * MA50_UNIT,
         }
     }
@@ -351,7 +351,7 @@ impl From<AvsData> for u32 {
         raw.set_no_usb_suspend(data.no_usb_suspend);
         raw.set_unchunked_extended_messages_support(data.unchunked_extended_messages_support);
         raw.set_epr_capable(data.epr_capable);
-        raw.set_output_voltage(data.output_voltage_mv / MV20_UNIT);
+        raw.set_output_voltage(data.output_voltage_mv / MV25_UNIT);
         raw.set_operating_current(data.operating_current_ma / MA50_UNIT);
         raw.0
     }
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pps_roundtrip() {
+    fn test_spr_pps_roundtrip() {
         const RAW_PPS: u32 = 0x35400202;
         let rdo = Rdo::for_pdo(
             RAW_PPS,
@@ -475,8 +475,8 @@ mod tests {
     }
 
     #[test]
-    fn test_avs_roundtrip() {
-        const RAW_AVS: u32 = 0x35400202;
+    fn test_spr_avs_roundtrip() {
+        const RAW_AVS: u32 = 0x35400801;
         let rdo = Rdo::for_pdo(
             RAW_AVS,
             // These values don't matter, only the kind is used
@@ -493,8 +493,35 @@ mod tests {
             no_usb_suspend: true,
             unchunked_extended_messages_support: false,
             epr_capable: true,
-            output_voltage_mv: 20,
-            operating_current_ma: 100,
+            output_voltage_mv: 100,
+            operating_current_ma: 50,
+        });
+        assert_eq!(rdo, expected);
+        assert_eq!(u32::from(expected), RAW_AVS);
+    }
+
+    #[test]
+    fn test_epr_avs_roundtrip() {
+        const RAW_AVS: u32 = 0x35400801;
+        let rdo = Rdo::for_pdo(
+            RAW_AVS,
+            // These values don't matter, only the kind is used
+            sink::Pdo::Augmented(sink::Apdo::EprAvs(sink::EprAvsData {
+                min_voltage_mv: 0,
+                max_voltage_mv: 0,
+                pdp_mw: 0,
+            })),
+        )
+        .unwrap();
+        let expected = Rdo::Avs(AvsData {
+            object_position: 3,
+            capability_mismatch: true,
+            usb_comm_capable: false,
+            no_usb_suspend: true,
+            unchunked_extended_messages_support: false,
+            epr_capable: true,
+            output_voltage_mv: 100,
+            operating_current_ma: 50,
         });
         assert_eq!(rdo, expected);
         assert_eq!(u32::from(expected), RAW_AVS);
