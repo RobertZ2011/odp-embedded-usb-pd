@@ -952,8 +952,8 @@ mod tests {
         bytes[0] = CommandType::GetPdMessage as u8;
         bytes[2] = 0x83;
         bytes[3] = 0x08;
-        bytes[4] = 0x01;
-        bytes[5] = 0x02;
+        bytes[4] = 0x04;
+        bytes[5] = 0x08;
 
         assert_eq!(
             decode(bytes).unwrap(),
@@ -990,8 +990,8 @@ mod tests {
         bytes[0] = CommandType::GetPdMessage as u8;
         bytes[2] = 0x83;
         bytes[3] = 0x38;
-        bytes[4] = 0x01;
-        bytes[5] = 0x0f; // Invalid message type
+        bytes[4] = 0x04;
+        bytes[5] = 0x3c; // Invalid message type
 
         assert_eq!(
             decode(bytes),

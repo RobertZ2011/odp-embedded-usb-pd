@@ -24,11 +24,11 @@ bitfield! {
     /// Recipient, crosses the boundary between the first and second bytes
     pub u8, recipient, set_recipient: 9, 7;
     /// Message offset
-    pub u8, message_offset, set_message_offset: 15, 10;
+    pub u8, message_offset, set_message_offset: 17, 10;
     /// Number of bytes
-    pub u8, num_bytes, set_num_bytes: 23, 16;
+    pub u8, num_bytes, set_num_bytes: 25, 18;
     /// Message type
-    pub u8, message_type, set_message_type: 29, 24;
+    pub u8, message_type, set_message_type: 31, 26;
 }
 
 #[cfg(feature = "defmt")]
@@ -303,7 +303,7 @@ mod test {
     #[test]
     fn test_args_raw_roundtrip() {
         // SOP on connector 3, message offset 2, 1 byte, battery cap message type
-        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x08, 0x01, 0x02, 0x00, 0x00];
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x08, 0x04, 0x08, 0x00, 0x00];
         let expected: Args<GlobalPortId> = Args {
             connector_number: GlobalPortId(3),
             recipient: Recipient::Sop,
@@ -320,7 +320,7 @@ mod test {
     #[test]
     fn test_args_raw_roundtrip_recipient_cross_byte() {
         // SOP'' (0b011) on connector 0x7f, recipient bit 0 is in byte 0 and bit 1 in byte 1
-        let encoded: [u8; ArgsRaw::LEN] = [0xff, 0x01, 0x00, 0x04, 0x00, 0x00];
+        let encoded: [u8; ArgsRaw::LEN] = [0xff, 0x01, 0x00, 0x10, 0x00, 0x00];
         let expected: Args<GlobalPortId> = Args {
             connector_number: GlobalPortId(0x7f),
             recipient: Recipient::SopPp,
@@ -347,7 +347,7 @@ mod test {
     #[test]
     fn test_args_raw_invalid_message_type() {
         // Invalid message type on connector 3, message offset 14, 1 byte
-        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x38, 0x01, 0x0f, 0x00, 0x00];
+        let encoded: [u8; ArgsRaw::LEN] = [0x83, 0x38, 0x04, 0x3c, 0x00, 0x00];
         assert_eq!(
             Args::<GlobalPortId>::try_from(bytemuck::must_cast::<_, ArgsRaw>(encoded)),
             Err(InvalidArgs::InvalidMessageType(InvalidMessageType(0x0f)))
