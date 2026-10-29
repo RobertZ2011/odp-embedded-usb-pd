@@ -270,14 +270,16 @@ impl Contract {
     }
 
     /// Returns the operating current in mA, uses maximum voltage for battery PDO calculation
-    /// Returns None on an attempted division by zero
+    /// Returns None on an attempted division by zero or overflow
     pub fn operating_current_ma(&self) -> Option<u16> {
         match self.rdo {
             Rdo::Fixed(data) => Some(data.operating_current_ma),
             Rdo::Battery(data) => data
                 .operating_power_mw
-                .checked_div(self.pdo.max_voltage_mv() as u32)
-                .map(|v| (1000 * v) as u16),
+                .checked_mul(1000)
+                .and_then(|operating_power| operating_power.checked_div(self.pdo.max_voltage_mv() as u32))
+                .filter(|&operating_current| operating_current <= u16::MAX as u32)
+                .map(|operating_current| operating_current as u16),
             Rdo::Variable(data) => Some(data.operating_current_ma),
             Rdo::Avs(data) => Some(data.operating_current_ma),
             Rdo::Pps(data) => Some(data.operating_current_ma),
@@ -327,6 +329,30 @@ mod test {
                 operational_power_mw: 60000,
             }),
             Rdo::Battery(rdo::BatteryData {
+                operating_power_mw: 45000,
+                max_operating_power_mw: 50000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), Some(2250));
+    }
+
+    /// Tests that an attempted division by zero returns None
+    #[test]
+    fn test_contract_operating_current_ma_battery_fail_zero() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Battery(BatteryData {
+                max_voltage_mv: 0,
+                min_voltage_mv: 0,
+                operational_power_mw: 60000,
+            }),
+            Rdo::Battery(rdo::BatteryData {
                 operating_power_mw: 40000,
                 max_operating_power_mw: 45000,
                 object_position: 0,
@@ -338,20 +364,45 @@ mod test {
             }),
         );
 
-        assert_eq!(contract.operating_current_ma(), Some(2000));
+        assert_eq!(contract.operating_current_ma(), None);
     }
 
+    /// Tests that an attempted current overflow returns None
     #[test]
-    fn test_contract_operating_current_ma_battery_fail() {
+    fn test_contract_operating_current_ma_battery_fail_current_overflow() {
         let contract = Contract::from_sink(
             sink::Pdo::Battery(BatteryData {
-                max_voltage_mv: 0,
-                min_voltage_mv: 15000,
+                max_voltage_mv: 2,
+                min_voltage_mv: 1,
                 operational_power_mw: 60000,
             }),
             Rdo::Battery(rdo::BatteryData {
                 operating_power_mw: 40000,
                 max_operating_power_mw: 45000,
+                object_position: 0,
+                capability_mismatch: false,
+                usb_comm_capable: false,
+                no_usb_suspend: false,
+                unchunked_extended_messages_support: false,
+                epr_capable: false,
+            }),
+        );
+
+        assert_eq!(contract.operating_current_ma(), None);
+    }
+
+    /// Tests that an attempted operating power overflow returns None
+    #[test]
+    fn test_contract_operating_current_ma_battery_fail_operating_power_overflow() {
+        let contract = Contract::from_sink(
+            sink::Pdo::Battery(BatteryData {
+                max_voltage_mv: 20000,
+                min_voltage_mv: 15000,
+                operational_power_mw: 8000000,
+            }),
+            Rdo::Battery(rdo::BatteryData {
+                operating_power_mw: 6000000,
+                max_operating_power_mw: 6500000,
                 object_position: 0,
                 capability_mismatch: false,
                 usb_comm_capable: false,
